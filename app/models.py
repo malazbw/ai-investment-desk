@@ -48,6 +48,7 @@ class Asset(Base):
     holdings = relationship("Holding", back_populates="asset")
     prices = relationship("Price", back_populates="asset")
     transactions = relationship("Transaction", back_populates="asset")
+    news = relationship("CompanyNews", back_populates="asset")
 
 
 class Holding(Base):
@@ -171,4 +172,25 @@ class ExchangeRate(Base):
             name="uq_exchange_rate_date_pair",
         ),
         Index("idx_exchange_rate_pair_date", "base_currency", "quote_currency", "date"),
+    )
+
+
+class CompanyNews(Base):
+    """News articles for portfolio stocks"""
+    __tablename__ = "company_news"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, ForeignKey("assets.id"), nullable=False, index=True)
+    headline = Column(String, nullable=False)
+    url = Column(String, nullable=False, unique=True)
+    source = Column(String, nullable=False)
+    published_date = Column(DateTime, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    asset = relationship("Asset", back_populates="news")
+
+    __table_args__ = (
+        Index("idx_company_news_symbol_date", "symbol", "published_date"),
+        Index("idx_company_news_date", "published_date"),
     )

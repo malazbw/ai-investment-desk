@@ -14,13 +14,14 @@ from app.schemas import (
     TransactionCreate, BrokerPortfolio
 )
 from app.services import PortfolioService, MacroDataService
-from app.services import ExchangeRateService
+from app.services import ExchangeRateService, NewsService
 from app.brokers import VirtualBroker
 from app.config import settings
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 macro_router = APIRouter(prefix="/api/macro", tags=["macro"])
 exchange_rates_router = APIRouter(prefix="/api/exchange-rates", tags=["exchange-rates"])
+news_router = APIRouter(prefix="/api/news", tags=["news"])
 
 # Initialize brokers
 virtual_broker = VirtualBroker()
@@ -231,3 +232,46 @@ def sync_exchange_rates(start_date: date | None = None, db: Session = Depends(ge
     if result["status"] == "error":
         raise HTTPException(status_code=502, detail=result["message"])
     return result
+
+
+# News endpoints
+@news_router.get("/portfolio")
+def get_portfolio_news(days: int = 7, limit: int = 50, db: Session = Depends(get_db)) -> Dict:
+    """Get news for all stocks in current portfolio"""
+    return NewsService.get_portfolio_news(db, days=days, limit=limit)
+
+
+@news_router.get("/{symbol}")
+def get_symbol_news(
+    symbol: str,
+    days: int = 30,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+) -> List[Dict]:
+    """Get news for specific stock symbol"""
+    return NewsService.get_symbol_news(db, symbol, days=days, limit=limit)
+
+
+@news_router.get("/{symbol}/latest")
+def get_latest_symbol_news(
+    symbol: str,
+    limit: int = 5,
+    db: Session = Depends(get_db)
+) -> List[Dict]:
+    """Get latest N articles for a symbol"""
+    return NewsService.get_latest_news(db, symbol, limit=limit)
+
+
+@news_router.post("/fetch-portfolio")
+async def manually_fetch_portfolio_news(db: Session = Depends(get_db)) -> Dict:
+    """Manually trigger news fetch for all portfolio stocks"""
+    result = await NewsService.fetch_and_store_portfolio_news(db, days=7)
+    if result["status"] != "success":
+        raise HTTPException(status_code=500, detail=result.get("message", "Failed to fetch news"))
+    return result
+
+
+@news_router.get("/stats/summary")
+def get_news_stats(db: Session = Depends(get_db)) -> Dict:
+    """Get statistics about stored news"""
+    return NewsService.get_news_stats(db)

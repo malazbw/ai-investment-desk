@@ -3,8 +3,9 @@ from typing import Callable, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+import asyncio
 
-from app.services import ExchangeRateService, MacroDataService
+from app.services import ExchangeRateService, MacroDataService, NewsService
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,17 @@ def init_scheduler(session_factory: Callable, fred_api_key: Optional[str] = None
             replace_existing=True,
         )
 
-    logger.info("APScheduler initialized with exchange-rate and configured macro jobs")
+    # News fetching job - run daily after market close (8 PM ET)
+    news_timezone = pytz.timezone("US/Eastern")
+    scheduler.add_job(
+        func=lambda: _run_news_job(session_factory),
+        trigger=CronTrigger(hour=20, minute=0, timezone=news_timezone),
+        id="daily_portfolio_news",
+        name="Fetch news for portfolio stocks",
+        replace_existing=True,
+    )
+
+    logger.info("APScheduler initialized with exchange-rate, macro, and news jobs")
     return scheduler
 
 
@@ -70,6 +81,24 @@ def _run_macro_job(session_factory: Callable, api_key: str, monthly: bool) -> No
         )
         if result["status"] != "success":
             logger.error("Scheduled macro job failed: %s", result["message"])
+    finally:
+        db.close()
+
+
+def _run_news_job(session_factory: Callable) -> None:
+    """Fetch news for all portfolio stocks"""
+    db = session_factory()
+    try:
+        result = asyncio.run(NewsService.fetch_and_store_portfolio_news(db, days=7))
+        if result["status"] != "success":
+            logger.error("Daily news job failed: %s", result.get("message", "Unknown error"))
+        else:
+            logger.info(
+                f"Daily news job complete: {result['articles_stored']} articles stored "
+                f"for {result['symbols']} symbols"
+            )
+    except Exception as e:
+        logger.error(f"Error in news job: {e}")
     finally:
         db.close()
 

@@ -5,11 +5,11 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from app.models import (
     Asset, Holding, Transaction, Price, PortfolioSnapshot, MacroIndicator,
-    ExchangeRate, AssetType, BrokerType, TransactionType
+    ExchangeRate, AssetType, BrokerType, TransactionType, CompanyNews
 )
 from app.schemas import (
     PortfolioSummary, HoldingResponse, BrokerPortfolio
@@ -399,4 +399,163 @@ class ExchangeRateService:
             "quote_currency": record.quote_currency,
             "rate": float(record.rate),
             "source": record.source,
+        }
+
+
+class NewsService:
+    """Service for managing company news"""
+
+    @staticmethod
+    def get_portfolio_symbols(db: Session) -> List[str]:
+        """Get all unique symbols in current portfolio"""
+        holdings = db.query(Holding).all()
+        symbols = list(set(h.asset_id for h in holdings))
+        logger.info(f"Found {len(symbols)} unique symbols in portfolio: {symbols}")
+        return symbols
+
+    @staticmethod
+    async def fetch_and_store_portfolio_news(db: Session, days: int = 7) -> Dict:
+        """Fetch news for all portfolio stocks and store in database"""
+        from app.data_sources.news_fetcher import fetch_news_for_stocks
+
+        try:
+            symbols = NewsService.get_portfolio_symbols(db)
+
+            if not symbols:
+                logger.warning("No symbols in portfolio")
+                return {"status": "success", "symbols": 0, "articles_stored": 0}
+
+            all_news = await fetch_news_for_stocks(symbols, days=days)
+
+            total_stored = 0
+            for symbol, articles in all_news.items():
+                stored = NewsService._store_articles(db, symbol, articles)
+                total_stored += stored
+                logger.info(f"Stored {stored} new articles for {symbol}")
+
+            logger.info(f"Total articles stored: {total_stored}")
+            return {
+                "status": "success",
+                "symbols": len(symbols),
+                "articles_stored": total_stored,
+                "symbols_list": symbols
+            }
+
+        except Exception as e:
+            logger.error(f"Error fetching portfolio news: {e}")
+            db.rollback()
+            return {"status": "error", "message": str(e)}
+
+    @staticmethod
+    def _store_articles(db: Session, symbol: str, articles: List) -> int:
+        """Store articles in database, avoiding duplicates"""
+        stored = 0
+
+        asset = db.query(Asset).filter(Asset.id == symbol).first()
+        if not asset:
+            logger.warning(f"Symbol {symbol} not in assets, skipping")
+            return 0
+
+        for article in articles:
+            existing = db.query(CompanyNews).filter(
+                CompanyNews.url == article.url
+            ).first()
+
+            if not existing:
+                news = CompanyNews(
+                    symbol=symbol,
+                    headline=article.headline,
+                    url=article.url,
+                    source=article.source,
+                    published_date=article.published_date
+                )
+                db.add(news)
+                stored += 1
+
+        db.commit()
+        return stored
+
+    @staticmethod
+    def get_portfolio_news(db: Session, days: int = 7, limit: int = 50) -> Dict[str, List[Dict]]:
+        """Get news for all portfolio stocks"""
+        symbols = NewsService.get_portfolio_symbols(db)
+
+        result = {}
+        since_date = datetime.utcnow() - timedelta(days=days)
+
+        for symbol in symbols:
+            articles = db.query(CompanyNews).filter(
+                CompanyNews.symbol == symbol,
+                CompanyNews.published_date >= since_date
+            ).order_by(CompanyNews.published_date.desc()).limit(limit).all()
+
+            result[symbol] = [
+                {
+                    "id": a.id,
+                    "headline": a.headline,
+                    "url": a.url,
+                    "source": a.source,
+                    "published_date": a.published_date.isoformat(),
+                    "fetched_at": a.fetched_at.isoformat()
+                }
+                for a in articles
+            ]
+
+        return result
+
+    @staticmethod
+    def get_symbol_news(db: Session, symbol: str, days: int = 30, limit: int = 20) -> List[Dict]:
+        """Get news for specific symbol"""
+        since_date = datetime.utcnow() - timedelta(days=days)
+
+        articles = db.query(CompanyNews).filter(
+            CompanyNews.symbol == symbol,
+            CompanyNews.published_date >= since_date
+        ).order_by(CompanyNews.published_date.desc()).limit(limit).all()
+
+        return [
+            {
+                "id": a.id,
+                "headline": a.headline,
+                "url": a.url,
+                "source": a.source,
+                "published_date": a.published_date.isoformat(),
+                "fetched_at": a.fetched_at.isoformat()
+            }
+            for a in articles
+        ]
+
+    @staticmethod
+    def get_latest_news(db: Session, symbol: str, limit: int = 5) -> List[Dict]:
+        """Get latest N articles for a symbol"""
+        articles = db.query(CompanyNews).filter(
+            CompanyNews.symbol == symbol
+        ).order_by(CompanyNews.published_date.desc()).limit(limit).all()
+
+        return [
+            {
+                "id": a.id,
+                "headline": a.headline,
+                "url": a.url,
+                "source": a.source,
+                "published_date": a.published_date.isoformat()
+            }
+            for a in articles
+        ]
+
+    @staticmethod
+    def get_news_stats(db: Session) -> Dict:
+        """Get statistics about stored news"""
+        total_articles = db.query(func.count(CompanyNews.id)).scalar()
+        unique_symbols = db.query(func.count(func.distinct(CompanyNews.symbol))).scalar()
+        unique_sources = db.query(func.count(func.distinct(CompanyNews.source))).scalar()
+        latest_article = db.query(CompanyNews).order_by(
+            CompanyNews.published_date.desc()
+        ).first()
+
+        return {
+            "total_articles": total_articles,
+            "unique_symbols": unique_symbols,
+            "unique_sources": unique_sources,
+            "latest_article_date": latest_article.published_date.isoformat() if latest_article else None
         }
