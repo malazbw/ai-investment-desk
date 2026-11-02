@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from decimal import Decimal
 from typing import List, Dict
 from datetime import date, datetime
+import asyncio
+import uuid
+import logging
 
 from app.database import get_db
 from app.models import BrokerType, AssetType, TransactionType
@@ -13,18 +16,64 @@ from app.schemas import (
     HoldingResponse, PortfolioSummary, TransactionResponse,
     TransactionCreate, BrokerPortfolio
 )
+from app.chat_schemas import ChatMessage, ChatResponse
 from app.services import PortfolioService, MacroDataService
 from app.services import ExchangeRateService, NewsService
 from app.brokers import VirtualBroker
 from app.config import settings
+from app.agents import BaseAgent, AgentRouter, AgentContext, execute_agents_parallel
+from app.agents.portfolio_agent import PortfolioAgent
+from app.llm.client import LLMClient
+from app.llm.prompts import SystemPrompts
+from app.llm.context_builder import ContextBuilder
+from app.llm.providers import LLMFactory
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 macro_router = APIRouter(prefix="/api/macro", tags=["macro"])
 exchange_rates_router = APIRouter(prefix="/api/exchange-rates", tags=["exchange-rates"])
 news_router = APIRouter(prefix="/api/news", tags=["news"])
+chat_router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Initialize brokers
 virtual_broker = VirtualBroker()
+
+# Initialize agents and router
+agents = {
+    "portfolio": PortfolioAgent(),
+    # More agents will be added here (market_research, risk_manager, etc)
+}
+agent_router = AgentRouter(agents)
+
+# Initialize LLM client based on config
+llm_client = None
+if settings.llm_provider.lower() == "claude":
+    if settings.claude_api_key:
+        try:
+            provider = LLMFactory.create_provider(
+                provider_type="claude",
+                api_key=settings.claude_api_key,
+                model=settings.claude_model,
+            )
+            llm_client = LLMClient(provider)
+            logger.info(f"LLM Provider: Claude ({settings.claude_model})")
+        except Exception as e:
+            logger.error(f"Failed to initialize Claude: {e}")
+    else:
+        logger.warning("Claude provider selected but CLAUDE_API_KEY not set")
+else:
+    # Default to Ollama (free, local)
+    try:
+        provider = LLMFactory.create_provider(
+            provider_type="ollama",
+            api_url=settings.ollama_api_url,
+            model=settings.ollama_model,
+        )
+        llm_client = LLMClient(provider)
+        logger.info(f"LLM Provider: Ollama ({settings.ollama_model}) at {settings.ollama_api_url}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Ollama: {e}")
 
 
 @router.get("/summary", response_model=PortfolioSummary)
@@ -275,3 +324,88 @@ async def manually_fetch_portfolio_news(db: Session = Depends(get_db)) -> Dict:
 def get_news_stats(db: Session = Depends(get_db)) -> Dict:
     """Get statistics about stored news"""
     return NewsService.get_news_stats(db)
+
+
+# Chat endpoint
+@chat_router.post("/message", response_model=ChatResponse)
+async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
+    """
+    Main chat endpoint for portfolio analysis.
+
+    1. Route message to appropriate agents
+    2. Execute agents in parallel
+    3. Aggregate results
+    4. Send to LLM for analysis
+    5. Return response
+    """
+    if not llm_client:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM not configured. Setup Ollama locally or set CLAUDE_API_KEY."
+        )
+
+    try:
+        # Generate conversation ID if not provided
+        conversation_id = chat_msg.conversation_id or str(uuid.uuid4())
+
+        logger.info(f"Processing chat message: {chat_msg.message[:100]}... (conv: {conversation_id})")
+
+        # Decide which agents to run
+        agents_to_run = agent_router.decide_agents(chat_msg.message)
+
+        if chat_msg.include_agents:
+            # Override with specific agents
+            agents_to_run = [
+                agent_router.get_agent(name)
+                for name in chat_msg.include_agents
+                if agent_router.get_agent(name)
+            ]
+
+        if not agents_to_run:
+            raise HTTPException(
+                status_code=400,
+                detail="No agents could handle this message"
+            )
+
+        logger.info(f"Running agents: {[a.name for a in agents_to_run]}")
+
+        # Create context for agents
+        context = AgentContext(
+            user_message=chat_msg.message,
+            metadata={"db": db}
+        )
+
+        # Execute agents in parallel
+        agent_outputs = await execute_agents_parallel(agents_to_run, context)
+
+        # Build context from agent outputs
+        context_dict = ContextBuilder.build_context(agent_outputs)
+        context_text = ContextBuilder.format_for_prompt(context_dict)
+
+        logger.info(f"Agent execution complete. Agents used: {[a.agent_name for a in agent_outputs]}")
+
+        # Send to LLM for analysis
+        response = await llm_client.analyze(
+            user_message=chat_msg.message,
+            system_prompt=SystemPrompts.GENERAL_ANALYST,
+            context=context_dict
+        )
+
+        logger.info(f"LLM response received for conversation {conversation_id}")
+
+        # Return response
+        return ChatResponse(
+            response=response,
+            conversation_id=conversation_id,
+            analysis=context_dict,
+            timestamp=datetime.utcnow(),
+            agents_used=[a.agent_name for a in agent_outputs]
+        )
+
+    except Exception as e:
+        logger.error(f"Chat error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat processing failed: {str(e)}"
+        )
+

@@ -198,6 +198,15 @@ class PortfolioService:
         ]
 
     @staticmethod
+    def get_recent_transactions(db: Session, days: int = 30) -> List[Transaction]:
+        """Get recent transactions for portfolio analysis"""
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        transactions = db.query(Transaction).filter(
+            Transaction.transaction_date >= cutoff_date
+        ).order_by(Transaction.transaction_date.desc()).all()
+        return transactions
+
+    @staticmethod
     def create_snapshot(db: Session):
         """Create a daily portfolio snapshot"""
         summary = PortfolioService.get_portfolio_summary(db)

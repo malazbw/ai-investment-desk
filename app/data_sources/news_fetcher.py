@@ -8,6 +8,11 @@ from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Filter keywords
+NOISE_KEYWORDS = {"meme", "reddit", "wsb", "crypto scam", "elon", "to the moon", "diamond hands", "hold"}
+INVESTMENT_KEYWORDS = {"earnings", "dividend", "analyst", "rating", "upgrade", "downgrade", "guidance", "beat", "miss"}
+REPUTABLE_SOURCES = {"Reuters", "Bloomberg", "CNBC", "WSJ", "Financial Times", "MarketWatch", "Yahoo Finance", "Seeking Alpha"}
+
 
 class NewsArticle:
     """Represents a news article"""
@@ -17,6 +22,27 @@ class NewsArticle:
         self.url = url
         self.source = source
         self.published_date = published_date
+
+    def is_relevant(self) -> bool:
+        """Check if article is investment-relevant"""
+        headline_lower = self.headline.lower()
+
+        # Reject noise
+        if any(word in headline_lower for word in NOISE_KEYWORDS):
+            logger.debug(f"Filtered (noise): {self.headline[:50]}")
+            return False
+
+        # Accept if has investment keywords
+        if any(word in headline_lower for word in INVESTMENT_KEYWORDS):
+            return True
+
+        # Accept if from reputable source
+        if self.source in REPUTABLE_SOURCES:
+            return True
+
+        # Reject other articles
+        logger.debug(f"Filtered (not relevant): {self.headline[:50]}")
+        return False
 
 
 class NewsSearcher:
@@ -61,13 +87,18 @@ class NewsSearcher:
                     published = datetime.fromisoformat(
                         article["publishedAt"].replace("Z", "+00:00")
                     )
-                    articles.append(NewsArticle(
+                    news_article = NewsArticle(
                         symbol=query.upper(),
                         headline=article["title"],
                         url=article["url"],
                         source=article.get("source", {}).get("name", "NewsAPI"),
                         published_date=published
-                    ))
+                    )
+
+                    # Filter for relevance
+                    if news_article.is_relevant():
+                        articles.append(news_article)
+
                 except Exception as e:
                     logger.warning(f"Error parsing article: {e}")
                     continue

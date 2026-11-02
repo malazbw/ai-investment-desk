@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     # NewsAPI
     newsapi_key: str = ""
 
+    # Claude API (Anthropic) - optional, for paid model
+    claude_api_key: str = ""
+    claude_model: str = "claude-opus-4-1"
+
+    # Ollama/Local LLM - default, free
+    llm_provider: str = "ollama"  # "ollama" or "claude"
+    ollama_api_url: str = "http://localhost:11434"
+    ollama_model: str = "mistral"  # or "neural-chat", "llama2", etc
+
     # LLM (future)
     openai_api_key: str = ""
 

@@ -4,7 +4,7 @@ FastAPI application entry point
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import router as portfolio_router, macro_router, exchange_rates_router, news_router
+from app.routes import router as portfolio_router, macro_router, exchange_rates_router, news_router, chat_router
 from app.database import get_session_factory
 from app.scheduler import init_scheduler, start_scheduler, stop_scheduler
 import logging
@@ -31,6 +31,7 @@ app.include_router(portfolio_router)
 app.include_router(macro_router)
 app.include_router(exchange_rates_router)
 app.include_router(news_router)
+app.include_router(chat_router)
 
 
 @app.on_event("startup")
