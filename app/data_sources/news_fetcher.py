@@ -46,6 +46,9 @@ class NewsSearcher:
             # Add API key if available
             if settings.newsapi_key and settings.newsapi_key != "your_newsapi_key_here":
                 params["apiKey"] = settings.newsapi_key
+                logger.info(f"Using NewsAPI key (length: {len(settings.newsapi_key)})")
+            else:
+                logger.warning(f"No valid NewsAPI key found. Key: {settings.newsapi_key}")
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(url, params=params)
