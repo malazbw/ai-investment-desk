@@ -8,7 +8,8 @@ import os
 
 class Settings(BaseSettings):
     # Database - check for env var first, then .env, then default
-    database_url: str = "postgresql://user:password@localhost:5432/ai_investment_desk"
+    # Use SQLite for development if DATABASE_URL not set
+    database_url: str = "sqlite:///./ai_investment_desk.db"
 
     # Broker credentials (will be fetched from .env)
     scalable_capital_api_key: str = ""

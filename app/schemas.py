@@ -60,11 +60,18 @@ class TransactionCreate(BaseModel):
     settlement_date: Optional[datetime] = None
     notes: Optional[str] = None
 
-    @field_validator("quantity", "price", "total_amount", "commission", mode="before")
+    @field_validator("quantity", "price", "total_amount", mode="before")
     @classmethod
     def validate_positive(cls, v):
         if v is not None and Decimal(str(v)) <= 0:
             raise ValueError("must be positive")
+        return v
+
+    @field_validator("commission", mode="before")
+    @classmethod
+    def validate_commission(cls, v):
+        if v is not None and Decimal(str(v)) < 0:
+            raise ValueError("must be non-negative")
         return v
 
 

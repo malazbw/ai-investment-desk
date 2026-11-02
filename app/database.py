@@ -3,7 +3,7 @@ Database connection and session management
 """
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, StaticPool
 from app.config import settings
 
 # Use NullPool for development to avoid connection pooling issues
@@ -14,11 +14,18 @@ def get_engine():
     global _engine
     if _engine is None:
         kwargs = {"echo": settings.debug}
-        if settings.debug:
+
+        # SQLite uses StaticPool for in-memory databases
+        if settings.database_url.startswith("sqlite://"):
+            if ":memory:" in settings.database_url:
+                kwargs["poolclass"] = StaticPool
+            kwargs["connect_args"] = {"check_same_thread": False}
+        elif settings.debug:
             kwargs["poolclass"] = NullPool
         else:
             kwargs["pool_size"] = 10
             kwargs["max_overflow"] = 20
+
         _engine = create_engine(settings.database_url, **kwargs)
     return _engine
 
@@ -40,3 +47,4 @@ def get_db() -> Session:
         yield db
     finally:
         db.close()
+
