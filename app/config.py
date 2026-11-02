@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # FRED API
     fred_api_key: str = ""
 
+    # NewsAPI
+    newsapi_key: str = ""
+
     # LLM (future)
     openai_api_key: str = ""
 

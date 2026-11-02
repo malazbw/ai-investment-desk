@@ -5,7 +5,6 @@ import httpx
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +29,8 @@ class NewsSearcher:
         Returns news articles for the query
         """
         try:
-            # NewsAPI free tier doesn't require API key for basic queries
-            # But we use the free tier with limited results
+            from app.config import settings
+
             url = "https://newsapi.org/v2/everything"
 
             from_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
@@ -43,6 +42,10 @@ class NewsSearcher:
                 "language": "en",
                 "pageSize": 10,
             }
+
+            # Add API key if available
+            if settings.newsapi_key and settings.newsapi_key != "your_newsapi_key_here":
+                params["apiKey"] = settings.newsapi_key
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(url, params=params)
