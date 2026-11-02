@@ -13,11 +13,13 @@ _engine = None
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(
-            settings.database_url,
-            poolclass=NullPool if settings.debug else None,
-            echo=settings.debug
-        )
+        kwargs = {"echo": settings.debug}
+        if settings.debug:
+            kwargs["poolclass"] = NullPool
+        else:
+            kwargs["pool_size"] = 10
+            kwargs["max_overflow"] = 20
+        _engine = create_engine(settings.database_url, **kwargs)
     return _engine
 
 

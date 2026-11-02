@@ -19,6 +19,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  app:
+    build: .
+    container_name: ai_investment_desk_app
+    environment:
+      DATABASE_URL: postgresql://investment_user:investment_password@postgres:5432/ai_investment_desk
+      FRED_API_KEY: ${FRED_API_KEY:-demo}
+      DEBUG: "True"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     driver: local

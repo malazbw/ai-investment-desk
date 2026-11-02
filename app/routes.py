@@ -45,18 +45,17 @@ def get_broker_holdings(broker: BrokerType, db: Session = Depends(get_db)):
 
 
 @router.post("/sync/virtual")
-def sync_virtual_broker(db: Session = Depends(get_db)):
+async def sync_virtual_broker(db: Session = Depends(get_db)):
     """
     Load portfolio from virtual broker (for testing).
     This will populate the database with sample holdings and transactions.
     """
-    import asyncio
     from app.models import Asset
 
     try:
         # Get holdings from virtual broker
-        holdings = asyncio.run(virtual_broker.get_holdings())
-        transactions = asyncio.run(virtual_broker.get_transactions())
+        holdings = await virtual_broker.get_holdings()
+        transactions = await virtual_broker.get_transactions()
 
         # Create assets from holdings
         for holding in holdings:

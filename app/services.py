@@ -100,12 +100,12 @@ class PortfolioService:
         elif transaction_type == TransactionType.SELL:
             if holding:
                 holding.quantity -= quantity
-                # Recalculate total cost based on remaining quantity
                 if holding.quantity > 0:
                     holding.total_cost = holding.average_cost * holding.quantity
-                else:
+                elif holding.quantity <= 0:
                     holding.quantity = Decimal("0")
                     holding.total_cost = Decimal("0")
+                    holding.average_cost = Decimal("0")
 
         db.commit()
         return transaction
