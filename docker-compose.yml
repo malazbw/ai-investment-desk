@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_investment_desk_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-investment_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-investment_password}
+      POSTGRES_DB: ${DB_NAME:-ai_investment_desk}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-investment_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
