@@ -1,4 +1,4 @@
-# Free Model Setup (Ollama)
+# Model Setup (Ollama and Gemini)
 
 ## How to Use Free Models Instead of Claude
 
@@ -53,6 +53,26 @@ If you want to use Claude (high quality but costs money):
 
 2. **That's it!** The system will automatically use Claude
 
+### Using Gemini's Free Tier (Hosted)
+
+Gemini runs remotely, so inference does not use your computer's memory or CPU.
+Google's free tier has usage limits and may change. Prompts and portfolio context
+are sent to Google, and free-tier content may be used to improve Google's
+products. Avoid sending real financial data unless you accept those terms.
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com/api-keys).
+2. Add these settings to `.env` (do not commit the key):
+   ```env
+   LLM_PROVIDER=gemini
+   GEMINI_API_KEY=your_api_key
+   GEMINI_MODEL=gemini-3.5-flash-lite
+   ```
+3. Confirm the selected model is available on the free tier for your account,
+   then restart the app.
+
+Do not enable paid billing if you require a hard zero-cost limit. Free-tier
+availability, model access, and quotas are controlled by Google and can change.
+
 ### Switching Back to Ollama
 
 Just set in `.env`:
@@ -82,6 +102,13 @@ CLAUDE_API_KEY=sk-...
 CLAUDE_MODEL=claude-opus-4-1
 ```
 
+### Gemini (Hosted Free Tier)
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_api_key
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
 ---
 
 ## Architecture
@@ -92,7 +119,8 @@ The LLM layer now uses a **provider abstraction**:
 app/llm/
 ├── providers.py      # Abstract LLMProvider + implementations
 │   ├── ClaudeProvider (paid)
-│   └── OllamaProvider (free)
+│   ├── GeminiProvider (hosted)
+│   └── OllamaProvider (local)
 ├── client.py         # LLMClient (uses any provider)
 ├── prompts.py        # System prompts (same for all)
 └── context_builder.py # Context formatting (same for all)
@@ -152,4 +180,3 @@ That's it! No API keys, no costs, completely local.
 | openhermes-2.5 | 4GB | Fast | Good | `ollama pull openhermes-2.5` |
 
 **My recommendation:** Start with **mistral** - good balance of speed and quality.
-

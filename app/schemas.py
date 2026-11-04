@@ -90,6 +90,7 @@ class PriceResponse(BaseModel):
     price: Decimal
     price_date: datetime
     source: str
+    currency: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -123,4 +124,3 @@ class BrokerPortfolio(BaseModel):
     total_value: Decimal
     total_cost: Decimal
     holdings: List[HoldingResponse]
-

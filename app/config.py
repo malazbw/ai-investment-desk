@@ -20,15 +20,26 @@ class Settings(BaseSettings):
     # FRED API
     fred_api_key: str = ""
 
+    # SEC EDGAR submissions API (identify requests with a contact email)
+    sec_user_agent: str = ""
+
     # NewsAPI
     newsapi_key: str = ""
+
+    # eToro market data
+    etoro_api_key: str = ""
+    etoro_user_key: str = ""
 
     # Claude API (Anthropic) - optional, for paid model
     claude_api_key: str = ""
     claude_model: str = "claude-opus-4-1"
 
-    # Ollama/Local LLM - default, free
-    llm_provider: str = "ollama"  # "ollama" or "claude"
+    # Gemini API (Google AI Studio)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.5-flash-lite"
+
+    # LLM provider selection
+    llm_provider: str = "ollama"
     ollama_api_url: str = "http://localhost:11434"
     ollama_model: str = "mistral"  # or "neural-chat", "llama2", etc
 

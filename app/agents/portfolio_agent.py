@@ -3,10 +3,13 @@ Portfolio Agent - analyzes user's holdings and portfolio
 """
 import time
 from app.agents.base import BaseAgent, AgentContext, AgentOutput
+from app.agents.assessment import build_assessment
+from app.models import Price
 from app.services import PortfolioService
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional
 import logging
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,124 @@ class PortfolioAgent(BaseAgent):
             # Get recent transactions
             transactions = PortfolioService.get_recent_transactions(db, days=30)
 
+            holding_data = []
+            for holding in holdings:
+                asset = holding.asset
+                latest_price = (
+                    db.query(Price)
+                    .filter(Price.asset_id == asset.id)
+                    .order_by(Price.price_date.desc(), Price.id.desc())
+                    .first()
+                    if asset
+                    else None
+                )
+                holding_data.append(
+                    {
+                        "symbol": asset.symbol if asset else "unknown",
+                        "name": asset.name if asset else "unknown",
+                        "quantity": float(holding.quantity),
+                        "average_cost": float(holding.average_cost),
+                        "total_cost": float(holding.total_cost),
+                        "current_price": (
+                            float(holding.current_price)
+                            if holding.current_price
+                            else 0
+                        ),
+                        "current_value": (
+                            float(holding.current_value)
+                            if holding.current_value
+                            else 0
+                        ),
+                        "gain_loss": (
+                            float(holding.current_value - holding.total_cost)
+                            if holding.current_value is not None
+                            else 0
+                        ),
+                        "gain_loss_percent": (
+                            float(
+                                (holding.current_value - holding.total_cost)
+                                / holding.total_cost
+                                * 100
+                            )
+                            if holding.current_value is not None
+                            and holding.total_cost
+                            else 0
+                        ),
+                        "broker": (
+                            holding.broker.value if holding.broker else "unknown"
+                        ),
+                        "price_source": latest_price.source if latest_price else None,
+                        "price_currency": (
+                            latest_price.currency if latest_price else None
+                        ),
+                        "price_date": (
+                            latest_price.price_date.isoformat()
+                            if latest_price
+                            else None
+                        ),
+                    }
+                )
+
+            valued_holdings = [
+                holding
+                for holding in holding_data
+                if holding["current_value"] > 0
+            ]
+            total_valued = sum(
+                (Decimal(str(holding["current_value"])) for holding in valued_holdings),
+                Decimal("0"),
+            )
+            largest_holding = max(
+                valued_holdings,
+                key=lambda holding: holding["current_value"],
+                default=None,
+            )
+            largest_weight = (
+                Decimal(str(largest_holding["current_value"]))
+                / total_valued
+                * Decimal("100")
+                if largest_holding and total_valued
+                else None
+            )
+            price_sources = sorted(
+                {
+                    holding["price_source"] or "unknown"
+                    for holding in valued_holdings
+                }
+            )
+            assessment_evidence = [
+                f"{len(holding_data)} stored holdings; stored total value "
+                f"{summary.total_value or 0}."
+            ]
+            if largest_holding and largest_weight is not None:
+                assessment_evidence.append(
+                    f"Largest stored position is {largest_holding['symbol']} "
+                    f"at {largest_weight:.2f}% of valued holdings."
+                )
+            if valued_holdings:
+                assessment_evidence.append(
+                    "Price sources: " + ", ".join(price_sources) + "."
+                )
+            has_sample_prices = "virtual_broker" in price_sources
+            assessment_missing = [
+                "The database may not include accounts or assets held elsewhere.",
+                "Investment goals, time horizon, and risk tolerance are not provided.",
+            ]
+            if has_sample_prices:
+                assessment_missing.append(
+                    "A virtual_broker price is sample data, not a live market quote."
+                )
+            assessment_finding = (
+                f"The stored portfolio contains {len(holding_data)} holdings."
+                if holding_data
+                else "No holdings are stored in the portfolio."
+            )
+            if largest_holding and largest_weight is not None:
+                assessment_finding += (
+                    f" {largest_holding['symbol']} is the largest at "
+                    f"{largest_weight:.2f}% of valued holdings."
+                )
+
             # Format data
             data = {
                 "portfolio_summary": {
@@ -52,21 +173,7 @@ class PortfolioAgent(BaseAgent):
                     "total_gain_loss_percent": float(summary.total_gain_loss_percent) if summary.total_gain_loss_percent else 0,
                     "cash_value": float(summary.cash_value) if summary.cash_value else 0,
                 },
-                "holdings": [
-                    {
-                        "symbol": h.asset.symbol if h.asset else "unknown",
-                        "name": h.asset.name if h.asset else "unknown",
-                        "quantity": float(h.quantity),
-                        "average_cost": float(h.average_cost),
-                        "total_cost": float(h.total_cost),
-                        "current_price": float(h.current_price) if h.current_price else 0,
-                        "current_value": float(h.current_value) if h.current_value else 0,
-                        "gain_loss": float(h.current_value - h.total_cost) if (h.current_value and h.total_cost) else 0,
-                        "gain_loss_percent": float((h.current_value - h.total_cost) / h.total_cost * 100) if (h.current_value and h.total_cost and h.total_cost != 0) else 0,
-                        "broker": h.broker.value if h.broker else "unknown",
-                    }
-                    for h in holdings
-                ],
+                "holdings": holding_data,
                 "recent_transactions": [
                     {
                         "symbol": t.asset.symbol if t.asset else "unknown",
@@ -78,6 +185,23 @@ class PortfolioAgent(BaseAgent):
                     }
                     for t in transactions
                 ],
+                "assessment": build_assessment(
+                    finding=assessment_finding,
+                    evidence=assessment_evidence,
+                    meaning=(
+                        "This describes only the holdings and price records stored "
+                        "in this desk; it is not a complete personal financial picture."
+                    ),
+                    counterpoint=(
+                        "Concentration within these records may overstate or understate "
+                        "your overall exposure if other accounts or assets are missing."
+                    ),
+                    confidence=(
+                        "High for arithmetic on stored records; low for completeness "
+                        "or current market value when prices are sample or stale."
+                    ),
+                    missing=assessment_missing,
+                ),
             }
 
             execution_time = (time.time() - start_time) * 1000

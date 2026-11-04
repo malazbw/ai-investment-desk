@@ -53,8 +53,10 @@ class FREDFetcher:
                 data = response.json()
 
                 if "observations" not in data:
-                    logger.error(f"No observations in FRED response for {series_id}")
-                    return []
+                    logger.error("FRED response omitted observations for %s", series_id)
+                    raise RuntimeError(
+                        f"FRED response omitted observations for series {series_id}"
+                    )
 
                 observations = data["observations"]
                 results = []
@@ -74,15 +76,28 @@ class FREDFetcher:
 
                 if attempt <= len(retry_delays):
                     delay = retry_delays[attempt - 1]
-                    logger.warning(f"FRED fetch failed for {series_id}, retry {attempt} after {delay}s: {e}")
+                    logger.warning(
+                        "FRED fetch failed for %s; retry %s after %s seconds",
+                        series_id,
+                        attempt,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
-                    logger.error(f"FRED fetch failed for {series_id} after all retries: {e}")
-                    return []
+                    logger.error("FRED fetch failed for %s after all retries", series_id)
+                    raise RuntimeError(
+                        f"FRED request failed for series {series_id}"
+                    ) from None
 
             except Exception as e:
-                logger.error(f"Unexpected error fetching {series_id}: {e}")
-                return []
+                logger.error(
+                    "Unexpected error fetching FRED series %s: %s",
+                    series_id,
+                    type(e).__name__,
+                )
+                raise RuntimeError(
+                    f"Unexpected response while fetching FRED series {series_id}"
+                ) from None
 
         return []
 

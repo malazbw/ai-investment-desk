@@ -6,18 +6,150 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
+import httpx
 import logging
 from app.models import (
     Asset, Holding, Transaction, Price, PortfolioSnapshot, MacroIndicator,
-    ExchangeRate, AssetType, BrokerType, TransactionType, CompanyNews
+    ExchangeRate, AssetType, BrokerType, TransactionType, CompanyNews,
+    CompanyFinancialFact,
 )
 from app.schemas import (
     PortfolioSummary, HoldingResponse, BrokerPortfolio
 )
 from app.data_sources.fred import FREDFetcher
 from app.data_sources.frankfurter import FrankfurterFetcher
+from app.brokers.etoro import EtoroAPIError, EtoroMarketDataClient
+from app.data_sources.sec import (
+    SEC_COMPANY_FACTS_URL,
+    SEC_TICKERS_URL,
+    build_ticker_map,
+    extract_company_facts,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class SECFundamentalsService:
+    """Fetch and persist annual SEC company facts for current portfolio holdings."""
+
+    def __init__(
+        self,
+        db: Session,
+        user_agent: str,
+        transport: Optional[httpx.AsyncBaseTransport] = None,
+    ):
+        self.db = db
+        self.user_agent = user_agent.strip()
+        self.transport = transport
+
+    async def sync_portfolio_facts(self) -> Dict:
+        if not self.user_agent or "@" not in self.user_agent:
+            return {
+                "status": "error",
+                "message": "SEC_USER_AGENT must identify the application and include a contact email.",
+            }
+
+        symbols = [
+            row[0]
+            for row in self.db.query(Asset.symbol)
+            .join(Holding, Holding.asset_id == Asset.id)
+            .filter(Holding.quantity > 0)
+            .distinct()
+            .order_by(Asset.symbol)
+            .all()
+        ]
+        if not symbols:
+            return {
+                "status": "success",
+                "symbols": 0,
+                "facts_stored": 0,
+                "errors": [],
+            }
+
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Encoding": "gzip, deflate",
+        }
+        errors = []
+        stored = 0
+        updated = 0
+        try:
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=30.0,
+                follow_redirects=True,
+                transport=self.transport,
+            ) as client:
+                ticker_response = await client.get(SEC_TICKERS_URL)
+                ticker_response.raise_for_status()
+                ticker_map = build_ticker_map(ticker_response.json())
+
+                for symbol in symbols:
+                    cik = ticker_map.get(symbol.upper())
+                    if cik is None:
+                        errors.append(f"{symbol}: ticker not found in SEC company list")
+                        continue
+
+                    try:
+                        response = await client.get(
+                            SEC_COMPANY_FACTS_URL.format(cik=cik)
+                        )
+                        response.raise_for_status()
+                        facts = extract_company_facts(response.json())
+                        if not facts:
+                            errors.append(f"{symbol}: no supported annual facts found")
+                            continue
+
+                        for fact in facts:
+                            existing = (
+                                self.db.query(CompanyFinancialFact)
+                                .filter(
+                                    CompanyFinancialFact.symbol == symbol,
+                                    CompanyFinancialFact.metric == fact["metric"],
+                                    CompanyFinancialFact.accession_number
+                                    == fact["accession_number"],
+                                )
+                                .one_or_none()
+                            )
+                            if existing:
+                                existing.value = Decimal(fact["value"])
+                                existing.units = fact["units"]
+                                existing.period_start = fact["period_start"]
+                                existing.period_end = fact["period_end"]
+                                existing.filed_date = fact["filed_date"]
+                                existing.form = fact["form"]
+                                existing.fetched_at = datetime.utcnow()
+                                updated += 1
+                            else:
+                                fact_values = {
+                                    **fact,
+                                    "value": Decimal(fact["value"]),
+                                }
+                                self.db.add(
+                                    CompanyFinancialFact(
+                                        symbol=symbol,
+                                        source="SEC EDGAR",
+                                        **fact_values,
+                                    )
+                                )
+                                stored += 1
+                        self.db.commit()
+                    except (httpx.HTTPError, ValueError, KeyError) as exc:
+                        self.db.rollback()
+                        logger.exception("SEC facts fetch failed for %s", symbol)
+                        errors.append(f"{symbol}: {exc}")
+        except (httpx.HTTPError, ValueError) as exc:
+            self.db.rollback()
+            logger.exception("SEC company ticker lookup failed")
+            return {"status": "error", "message": str(exc)}
+
+        return {
+            "status": "partial" if errors else "success",
+            "symbols": len(symbols),
+            "facts_stored": stored,
+            "facts_updated": updated,
+            "errors": errors,
+        }
 
 
 class PortfolioService:
@@ -116,14 +248,30 @@ class PortfolioService:
         prices: Dict[str, Tuple[Decimal, str]]  # {symbol: (price, source)}
     ):
         """Update current prices for holdings"""
-        for symbol, (price, source) in prices.items():
+        observed_at = datetime.utcnow()
+        PortfolioService.update_market_prices(
+            db,
+            {
+                symbol: (price, observed_at, source, None)
+                for symbol, (price, source) in prices.items()
+            },
+        )
+
+    @staticmethod
+    def update_market_prices(
+        db: Session,
+        prices: Dict[str, Tuple[Decimal, datetime, str, Optional[str]]],
+    ) -> None:
+        """Store timestamped market prices and update current holding valuations."""
+        for symbol, (price, price_date, source, currency) in prices.items():
             asset = db.query(Asset).filter(Asset.symbol == symbol).first()
             if asset:
                 price_record = Price(
                     asset_id=asset.id,
                     price=price,
-                    price_date=datetime.utcnow(),
-                    source=source
+                    price_date=price_date,
+                    source=source,
+                    currency=currency,
                 )
                 db.add(price_record)
 
@@ -235,6 +383,11 @@ class MacroDataService:
         try:
             logger.info("Starting daily macro data fetch...")
             data = self.fred.fetch_daily_series(start_date)
+            if not any(data.values()):
+                return {
+                    "status": "error",
+                    "message": "FRED returned no observations for the requested daily series.",
+                }
             count = self._store_macro_data(data)
             logger.info(f"Successfully stored {count} daily macro records")
             return {"status": "success", "records_stored": count, "series": list(data.keys())}
@@ -247,6 +400,11 @@ class MacroDataService:
         try:
             logger.info("Starting monthly macro data fetch...")
             data = self.fred.fetch_monthly_series(start_date)
+            if not any(data.values()):
+                return {
+                    "status": "error",
+                    "message": "FRED returned no observations for the requested monthly series.",
+                }
             count = self._store_macro_data(data)
             logger.info(f"Successfully stored {count} monthly macro records")
             return {"status": "success", "records_stored": count, "series": list(data.keys())}
@@ -474,12 +632,15 @@ class NewsService:
                 news = CompanyNews(
                     symbol=symbol,
                     headline=article.headline,
+                    description=article.description,
                     url=article.url,
                     source=article.source,
                     published_date=article.published_date
                 )
                 db.add(news)
                 stored += 1
+            elif not existing.description and article.description:
+                existing.description = article.description
 
         db.commit()
         return stored
@@ -502,6 +663,7 @@ class NewsService:
                 {
                     "id": a.id,
                     "headline": a.headline,
+                    "description": a.description,
                     "url": a.url,
                     "source": a.source,
                     "published_date": a.published_date.isoformat(),
@@ -526,6 +688,7 @@ class NewsService:
             {
                 "id": a.id,
                 "headline": a.headline,
+                "description": a.description,
                 "url": a.url,
                 "source": a.source,
                 "published_date": a.published_date.isoformat(),
@@ -545,6 +708,7 @@ class NewsService:
             {
                 "id": a.id,
                 "headline": a.headline,
+                "description": a.description,
                 "url": a.url,
                 "source": a.source,
                 "published_date": a.published_date.isoformat()
@@ -568,3 +732,143 @@ class NewsService:
             "unique_sources": unique_sources,
             "latest_article_date": latest_article.published_date.isoformat() if latest_article else None
         }
+
+
+class EtoroPriceService:
+    """Fetch and persist eToro stock, ETF, and crypto prices in USD."""
+
+    SUPPORTED_ASSET_TYPES = (AssetType.STOCK, AssetType.ETF, AssetType.CRYPTO)
+
+    def __init__(self, db: Session, client: Optional[EtoroMarketDataClient] = None):
+        self.db = db
+        if client is None:
+            from app.config import settings
+
+            client = EtoroMarketDataClient(
+                api_key=settings.etoro_api_key,
+                user_key=settings.etoro_user_key,
+            )
+        self.client = client
+
+    async def sync_portfolio_prices(self) -> Dict:
+        assets = (
+            self.db.query(Asset)
+            .join(Holding, Holding.asset_id == Asset.id)
+            .filter(
+                Holding.quantity > 0,
+                Asset.asset_type.in_(self.SUPPORTED_ASSET_TYPES),
+            )
+            .distinct()
+            .order_by(Asset.symbol)
+            .all()
+        )
+        if not assets:
+            return {
+                "status": "success",
+                "currency": "USD",
+                "assets": 0,
+                "prices_updated": 0,
+                "errors": [],
+            }
+
+        errors: List[str] = []
+        asset_by_instrument_id = {}
+
+        async with self.client as client:
+            for asset in assets:
+                if asset.etoro_instrument_id is not None:
+                    asset_by_instrument_id[asset.etoro_instrument_id] = asset
+                    continue
+                try:
+                    instrument_id = await client.resolve_instrument_id(asset.symbol)
+                except EtoroAPIError as exc:
+                    logger.error("eToro symbol lookup failed for %s: %s", asset.symbol, exc)
+                    errors.append(f"{asset.symbol}: {exc}")
+                    continue
+                if instrument_id is None:
+                    errors.append(f"{asset.symbol}: no exact eToro instrument match")
+                    continue
+                asset.etoro_instrument_id = instrument_id
+                asset_by_instrument_id[instrument_id] = asset
+
+            updates = {}
+            instrument_ids = list(asset_by_instrument_id)
+            for offset in range(0, len(instrument_ids), client.MAX_INSTRUMENTS_PER_REQUEST):
+                batch = instrument_ids[offset:offset + client.MAX_INSTRUMENTS_PER_REQUEST]
+                try:
+                    quotes = await client.get_quotes(batch)
+                except EtoroAPIError as exc:
+                    symbols = ", ".join(
+                        asset_by_instrument_id[instrument_id].symbol
+                        for instrument_id in batch
+                    )
+                    logger.error("eToro price request failed for %s: %s", symbols, exc)
+                    errors.extend(
+                        f"{asset_by_instrument_id[instrument_id].symbol}: {exc}"
+                        for instrument_id in batch
+                    )
+                    continue
+
+                for instrument_id in batch:
+                    asset = asset_by_instrument_id[instrument_id]
+                    quote = quotes.get(instrument_id)
+                    if quote is None:
+                        errors.append(f"{asset.symbol}: eToro returned no valid quote")
+                        continue
+                    updates[asset.symbol] = (
+                        quote.price_usd,
+                        quote.price_date,
+                        "etoro",
+                        "USD",
+                    )
+
+        PortfolioService.update_market_prices(self.db, updates)
+        if not updates and errors:
+            status = "error"
+        elif errors:
+            status = "partial"
+        else:
+            status = "success"
+        return {
+            "status": status,
+            "currency": "USD",
+            "assets": len(assets),
+            "prices_updated": len(updates),
+            "symbols_updated": sorted(updates),
+            "errors": errors,
+        }
+
+    @staticmethod
+    def get_latest_portfolio_prices(db: Session) -> List[Dict]:
+        assets = (
+            db.query(Asset)
+            .join(Price, Price.asset_id == Asset.id)
+            .filter(
+                Price.source == "etoro",
+                Asset.asset_type.in_(EtoroPriceService.SUPPORTED_ASSET_TYPES),
+            )
+            .distinct()
+            .order_by(Asset.symbol)
+            .all()
+        )
+        latest_prices = []
+        for asset in assets:
+            price = (
+                db.query(Price)
+                .filter(Price.asset_id == asset.id, Price.source == "etoro")
+                .order_by(Price.price_date.desc(), Price.id.desc())
+                .first()
+            )
+            if price is None:
+                continue
+            latest_prices.append(
+                {
+                    "symbol": asset.symbol,
+                    "asset_type": asset.asset_type.value,
+                    "price": price.price,
+                    "currency": price.currency,
+                    "price_date": price.price_date.isoformat(),
+                    "source": price.source,
+                }
+            )
+        return latest_prices

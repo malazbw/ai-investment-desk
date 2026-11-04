@@ -45,6 +45,44 @@ Once the server is running, visit:
 curl -X POST http://localhost:8000/api/portfolio/sync/virtual
 ```
 
+### Prepare Current Research Data
+
+Chat analysis reads stored data; it does not fetch live sources for every question.
+Configure the relevant provider credentials, then sync the sources before testing:
+
+```bash
+# Requires FRED_API_KEY
+curl -X POST http://localhost:8000/api/macro/jobs/daily
+curl -X POST http://localhost:8000/api/macro/jobs/monthly
+
+# Requires NEWSAPI_KEY
+curl -X POST http://localhost:8000/api/news/fetch-portfolio
+
+# Requires SEC_USER_AGENT with an identifying contact email
+curl -X POST http://localhost:8000/api/fundamentals/sync/sec
+
+# Requires ETORO_API_KEY and ETORO_USER_KEY
+curl -X POST http://localhost:8000/api/prices/sync/etoro
+```
+
+The virtual broker deliberately supplies sample holdings and prices. Agent output
+reports each price source; a `virtual_broker` quote must not be treated as a live
+market price. News analysis uses headlines and, when provided by NewsAPI, a short
+publisher description; it does not fetch full article text. Macro and company
+fundamentals are based on the latest data stored from FRED and SEC filings,
+respectively, and can lag current conditions.
+
+### Ask About a Company Outside Your Portfolio
+
+The market-research agent recognizes explicit company names such as NVIDIA or
+tickers such as `NVDA`. For a company that is not already held, it invokes an
+on-demand research tool to request SEC company facts, an optional eToro quote,
+and optional NewsAPI headlines/snippets. These results are returned as company
+research only; the tool does not add the company to your holdings or save its
+price/news as portfolio data. Configure `SEC_USER_AGENT`, `ETORO_API_KEY`,
+`ETORO_USER_KEY`, and `NEWSAPI_KEY` to enable those sources. Each source reports
+its own unavailable/error status, so the answer can still be partial.
+
 ### Get Portfolio Summary
 ```bash
 curl http://localhost:8000/api/portfolio/summary
@@ -152,7 +190,8 @@ ai-investment-desk/
 ### Market Data
 - Macro indicators (VIX, DFF, DGS10 from FRED API)
 - Exchange rates (EUR/USD, EUR/GBP, etc.)
-- Automatic daily updates
+- eToro stock, ETF, and crypto prices stored in USD
+- Automatic daily updates when eToro credentials are configured
 
 ### Virtual Broker
 - Sample portfolio for testing
@@ -172,6 +211,10 @@ DATABASE_URL=postgresql://user:password@localhost:5432/ai_investment_desk
 # FRED API (for macro data)
 FRED_API_KEY=your_key_here
 
+# eToro Public API (required for eToro price sync)
+ETORO_API_KEY=your_public_api_key
+ETORO_USER_KEY=your_user_key
+
 # Broker Credentials (for future integrations)
 SCALABLE_CAPITAL_API_KEY=xxx
 SCALABLE_CAPITAL_API_SECRET=xxx
@@ -184,6 +227,15 @@ LOG_LEVEL=INFO
 ```
 
 Create `.env` file in project root. The app will load it automatically.
+After adding eToro price mapping and currency fields, apply database migrations
+with `alembic upgrade head` before starting the app. The API keys are available
+from the eToro account's API key management settings; read access is sufficient
+for market-price retrieval.
+
+Manually sync prices with `POST /api/prices/sync/etoro`, and retrieve the latest
+stored portfolio prices with `GET /api/prices/latest`.
+The sync normalizes market prices and current holding valuations to USD; it does
+not convert previously recorded transactions or cost basis.
 
 ---
 

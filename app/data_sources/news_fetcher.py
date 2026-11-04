@@ -16,12 +16,21 @@ REPUTABLE_SOURCES = {"Reuters", "Bloomberg", "CNBC", "WSJ", "Financial Times", "
 
 class NewsArticle:
     """Represents a news article"""
-    def __init__(self, symbol: str, headline: str, url: str, source: str, published_date: datetime):
+    def __init__(
+        self,
+        symbol: str,
+        headline: str,
+        url: str,
+        source: str,
+        published_date: datetime,
+        description: Optional[str] = None,
+    ):
         self.symbol = symbol
         self.headline = headline
         self.url = url
         self.source = source
         self.published_date = published_date
+        self.description = description
 
 
 class NewsSearcher:
@@ -37,6 +46,8 @@ class NewsSearcher:
             from app.config import settings
 
             url = "https://newsapi.org/v2/everything"
+            if not settings.newsapi_key or settings.newsapi_key == "your_newsapi_key_here":
+                raise RuntimeError("NEWSAPI_KEY must be configured to fetch news.")
 
             from_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
@@ -48,12 +59,7 @@ class NewsSearcher:
                 "pageSize": 10,
             }
 
-            # Add API key if available
-            if settings.newsapi_key and settings.newsapi_key != "your_newsapi_key_here":
-                params["apiKey"] = settings.newsapi_key
-                logger.info(f"Using NewsAPI key (length: {len(settings.newsapi_key)})")
-            else:
-                logger.warning(f"No valid NewsAPI key found. Key: {settings.newsapi_key}")
+            params["apiKey"] = settings.newsapi_key
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(url, params=params)
@@ -71,7 +77,8 @@ class NewsSearcher:
                         headline=article["title"],
                         url=article["url"],
                         source=article.get("source", {}).get("name", "NewsAPI"),
-                        published_date=published
+                        published_date=published,
+                        description=article.get("description"),
                     ))
                 except Exception as e:
                     logger.warning(f"Error parsing article: {e}")
@@ -79,9 +86,11 @@ class NewsSearcher:
 
             return articles
 
-        except Exception as e:
-            logger.error(f"Error fetching from NewsAPI: {e}")
-            return []
+        except Exception as exc:
+            logger.error("NewsAPI request failed: %s", type(exc).__name__)
+            raise RuntimeError(
+                "NewsAPI request failed; check provider configuration and availability."
+            ) from None
 
     @staticmethod
     async def search_ycombinator_news():

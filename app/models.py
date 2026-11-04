@@ -42,6 +42,7 @@ class Asset(Base):
     asset_type = Column(Enum(AssetType), nullable=False)
     isin = Column(String, nullable=True, index=True)
     currency = Column(String, default="EUR")
+    etoro_instrument_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -49,6 +50,7 @@ class Asset(Base):
     prices = relationship("Price", back_populates="asset")
     transactions = relationship("Transaction", back_populates="asset")
     news = relationship("CompanyNews", back_populates="asset")
+    financial_facts = relationship("CompanyFinancialFact", back_populates="asset")
 
 
 class Holding(Base):
@@ -61,7 +63,7 @@ class Holding(Base):
     quantity = Column(Numeric(20, 8), nullable=False)  # Support fractions for crypto
     average_cost = Column(Numeric(15, 4), nullable=False)  # Cost per unit
     total_cost = Column(Numeric(20, 4), nullable=False)  # Total cost basis
-    current_price = Column(Numeric(15, 4), nullable=True)
+    current_price = Column(Numeric(20, 8), nullable=True)
     current_value = Column(Numeric(20, 4), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -103,9 +105,10 @@ class Price(Base):
 
     id = Column(Integer, primary_key=True)
     asset_id = Column(String, ForeignKey("assets.id"), nullable=False, index=True)
-    price = Column(Numeric(15, 4), nullable=False)
+    price = Column(Numeric(20, 8), nullable=False)
     price_date = Column(DateTime, nullable=False)
     source = Column(String, nullable=False)  # "broker_api", "market_data", etc.
+    currency = Column(String(3), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     asset = relationship("Asset", back_populates="prices")
@@ -182,6 +185,7 @@ class CompanyNews(Base):
     id = Column(Integer, primary_key=True)
     symbol = Column(String, ForeignKey("assets.id"), nullable=False, index=True)
     headline = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
     url = Column(String, nullable=False, unique=True)
     source = Column(String, nullable=False)
     published_date = Column(DateTime, nullable=False)
@@ -193,4 +197,38 @@ class CompanyNews(Base):
     __table_args__ = (
         Index("idx_company_news_symbol_date", "symbol", "published_date"),
         Index("idx_company_news_date", "published_date"),
+    )
+
+
+class CompanyFinancialFact(Base):
+    """Company-reported financial facts imported from SEC filings."""
+    __tablename__ = "company_financial_facts"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, ForeignKey("assets.id"), nullable=False, index=True)
+    metric = Column(String(50), nullable=False)
+    value = Column(Numeric(30, 8), nullable=False)
+    units = Column(String(30), nullable=False)
+    period_start = Column(Date, nullable=True)
+    period_end = Column(Date, nullable=False)
+    filed_date = Column(Date, nullable=False)
+    form = Column(String(10), nullable=False)
+    accession_number = Column(String(25), nullable=False)
+    source = Column(String(20), nullable=False, default="SEC EDGAR")
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    asset = relationship("Asset", back_populates="financial_facts")
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "metric",
+            "accession_number",
+            name="uq_company_financial_fact_filing",
+        ),
+        Index(
+            "idx_company_financial_fact_symbol_metric_period",
+            "symbol",
+            "metric",
+            "period_end",
+        ),
     )

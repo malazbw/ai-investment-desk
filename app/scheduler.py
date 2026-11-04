@@ -5,15 +5,26 @@ from apscheduler.triggers.cron import CronTrigger
 import pytz
 import asyncio
 
-from app.services import ExchangeRateService, MacroDataService, NewsService
+from app.brokers.etoro import EtoroMarketDataClient
+from app.services import (
+    EtoroPriceService,
+    ExchangeRateService,
+    MacroDataService,
+    NewsService,
+)
 
 logger = logging.getLogger(__name__)
 
 scheduler = None
 
 
-def init_scheduler(session_factory: Callable, fred_api_key: Optional[str] = None):
-    """Initialize daily FX ingestion and optional FRED macro jobs."""
+def init_scheduler(
+    session_factory: Callable,
+    fred_api_key: Optional[str] = None,
+    etoro_api_key: Optional[str] = None,
+    etoro_user_key: Optional[str] = None,
+):
+    """Initialize daily FX, news, and optional macro and eToro price jobs."""
     global scheduler
 
     if scheduler is not None:
@@ -56,7 +67,19 @@ def init_scheduler(session_factory: Callable, fred_api_key: Optional[str] = None
         replace_existing=True,
     )
 
-    logger.info("APScheduler initialized with exchange-rate, macro, and news jobs")
+    if etoro_api_key and etoro_user_key:
+        etoro_timezone = pytz.timezone("US/Eastern")
+        scheduler.add_job(
+            func=lambda: _run_etoro_price_job(
+                session_factory, etoro_api_key, etoro_user_key
+            ),
+            trigger=CronTrigger(hour=20, minute=30, timezone=etoro_timezone),
+            id="daily_etoro_prices",
+            name="Fetch daily eToro portfolio prices in USD",
+            replace_existing=True,
+        )
+
+    logger.info("APScheduler initialized for scheduled data ingestion")
     return scheduler
 
 
@@ -99,6 +122,37 @@ def _run_news_job(session_factory: Callable) -> None:
             )
     except Exception as e:
         logger.error(f"Error in news job: {e}")
+    finally:
+        db.close()
+
+
+def _run_etoro_price_job(
+    session_factory: Callable,
+    api_key: str,
+    user_key: str,
+) -> None:
+    """Fetch and store daily eToro portfolio prices."""
+    db = session_factory()
+    try:
+        service = EtoroPriceService(
+            db,
+            client=EtoroMarketDataClient(api_key=api_key, user_key=user_key),
+        )
+        result = asyncio.run(service.sync_portfolio_prices())
+        if result["status"] == "error":
+            logger.error("Daily eToro price job failed: %s", result["errors"])
+        else:
+            logger.info(
+                "Daily eToro price job %s: %s/%s prices updated in %s",
+                result["status"],
+                result["prices_updated"],
+                result["assets"],
+                result["currency"],
+            )
+            if result["errors"]:
+                logger.warning("eToro price job partial failures: %s", result["errors"])
+    except Exception:
+        logger.exception("Daily eToro price job failed")
     finally:
         db.close()
 

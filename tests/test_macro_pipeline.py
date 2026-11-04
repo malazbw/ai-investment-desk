@@ -73,10 +73,15 @@ def test_daily_macro_fetch_passes_backfill_start_date_to_fetcher():
     start_date = "2023-11-02"
 
     try:
-        with patch.object(service.fred, "fetch_daily_series", return_value={}) as fetch:
+        with patch.object(
+            service.fred,
+            "fetch_daily_series",
+            return_value={"DFF": [("2023-11-02", Decimal("5.25"))]},
+        ) as fetch:
             result = service.fetch_and_store_daily_macro(start_date)
 
         assert result["status"] == "success"
+        assert result["records_stored"] == 1
         fetch.assert_called_once_with(start_date)
     finally:
         db.close()
@@ -89,11 +94,36 @@ def test_monthly_macro_fetch_passes_backfill_start_date_to_fetcher():
     start_date = "2023-11-02"
 
     try:
-        with patch.object(service.fred, "fetch_monthly_series", return_value={}) as fetch:
+        with patch.object(
+            service.fred,
+            "fetch_monthly_series",
+            return_value={"CPIAUCSL": [("2023-11-02", Decimal("300.0"))]},
+        ) as fetch:
             result = service.fetch_and_store_monthly_macro(start_date)
 
         assert result["status"] == "success"
+        assert result["records_stored"] == 1
         fetch.assert_called_once_with(start_date)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_macro_sync_reports_empty_observations_instead_of_success():
+    engine, db = make_session()
+    service = MacroDataService(db, "test-key")
+
+    try:
+        with patch.object(
+            service.fred,
+            "fetch_daily_series",
+            return_value={"VIXCLS": [], "DFF": [], "DGS10": []},
+        ):
+            result = service.fetch_and_store_daily_macro()
+
+        assert result["status"] == "error"
+        assert "no observations" in result["message"].lower()
+        assert db.query(MacroIndicator).count() == 0
     finally:
         db.close()
         engine.dispose()

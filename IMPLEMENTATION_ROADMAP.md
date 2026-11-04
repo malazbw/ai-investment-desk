@@ -34,62 +34,70 @@
 - Added claude_model to config
 - Anthropic package in requirements.txt
 
+### ✅ Specialist Agent Architecture (Initial Implementation)
+- Registered Portfolio, Market Research, Valuation, Risk, and Macro Context agents
+- Added explicit Synthesis Agent for the final cross-agent response
+- Added intent routing for specific questions and broad investment analysis
+- Parallel agent runs use separate SQLAlchemy sessions
+- Agent outputs identify unavailable data rather than fabricating metrics
+- Focused mocked tests cover routing, individual agents, session isolation, and synthesis
+
+**Remaining agent work:** add a financial fundamentals provider for P/E and related
+metrics, improve news/sentiment and analyst coverage, and extend risk/macro analysis.
+
 ---
 
 ## In Progress / Pending (Phase 1b - Complete MVP)
 
 ### Task #5: eToro Integration (HIGH PRIORITY)
-**Status**: Not started
+**Status**: Price ingestion implemented; holdings sync remains pending
 **Objective**: Fetch real-time prices and holdings from eToro API
 
 **What needs to be done:**
 
-1. **Research eToro API**
-   - [ ] Document API endpoints available
-   - [ ] Understand authentication (OAuth vs API key)
-   - [ ] Check rate limits and quotas
-   - [ ] Review market data available (stocks, crypto, ETFs)
-   - [ ] Identify news/sentiment endpoints
+1. **Market price ingestion** (implemented)
+   - [x] Use the documented eToro Public API and credential headers
+   - [x] Resolve exact ticker matches and cache instrument IDs
+   - [x] Fetch stock, ETF, and crypto prices and normalize to USD
+   - [x] Persist timestamped prices and update holding valuations
+   - [x] Schedule a daily sync and expose manual/latest price endpoints
+   - [x] Cover API parsing and persistence with mocked tests
 
-2. **Build eToro Client** (`app/brokers/etoro/`)
-   - [ ] Create `__init__.py`
-   - [ ] Create `client.py` with eToroBroker class
-   - [ ] Implement `async get_prices(symbols: List[str]) -> Dict`
+2. **Remaining eToro integration**
    - [ ] Implement `async get_holdings() -> List[Holding]`
    - [ ] Implement `async get_news(symbol: str) -> List[NewsArticle]`
    - [ ] Implement `async get_fundamentals(symbol: str) -> Dict`
-   - [ ] Add authentication (API key management)
-   - [ ] Add error handling and retry logic
 
 3. **Integration Points**
-   - [ ] Add eToro client initialization to routes.py
-   - [ ] Update Price model if needed for real-time data
-   - [ ] Add eToro to BrokerType enum if not already there
+   - [x] Add eToro client initialization to the price sync service
+   - [x] Extend price model and asset mapping for eToro USD prices
+   - [ ] Add eToro to `BrokerType` when implementing account holdings sync
 
 4. **Testing**
    - [ ] Test with demo account credentials
-   - [ ] Mock API responses for CI/testing
+   - [x] Mock API responses for CI/testing
    - [ ] Verify price feed accuracy
 
-**Files to create:**
+**Files implemented:**
 - `app/brokers/etoro/__init__.py`
 - `app/brokers/etoro/client.py`
+- `alembic/versions/add_etoro_usd_prices.py`
+- `tests/test_etoro_price_pipeline.py`
 
-**Files to modify:**
-- `app/models.py` (if needed)
-- `app/routes.py` (initialize eToro client)
+**Other integration points:** `app/config.py`, `app/models.py`, `app/services.py`,
+`app/routes.py`, `app/scheduler.py`, and `app/main.py`.
 
 ---
 
 ### Task #6: Market Research Agent (HIGH PRIORITY)
-**Status**: Not started
+**Status**: Initial stored-news agent implemented; external research sources remain
 **Objective**: Fetch and analyze news, sentiment, analyst ratings
 
 **What needs to be done:**
 
 1. **Build Market Research Agent** (`app/agents/market_research_agent.py`)
-   - [ ] Create class inheriting from BaseAgent
-   - [ ] Implement news fetching for portfolio holdings
+   - [x] Create class inheriting from BaseAgent
+   - [x] Read stored news for portfolio holdings
    - [ ] Implement sentiment analysis (if available via API)
    - [ ] Implement analyst rating aggregation
    - [ ] Format output for Claude
@@ -392,4 +400,3 @@ NEWSAPI_KEY=...
 2. Any preference on frontend framework?
 3. Should we setup basic frontend first to test the chat endpoint?
 4. Do you have eToro API credentials for integration testing?
-

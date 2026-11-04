@@ -1,8 +1,9 @@
 """
 Agent router/orchestrator - decides which agents to run
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Optional
 from app.agents.base import BaseAgent
+from app.agents.tools import extract_company_symbols
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,32 +41,51 @@ class AgentRouter:
         if "portfolio" in self.agents:
             agents_to_run.append(self.agents["portfolio"])
 
-        # Keywords for other agents
+        # Broad investment-action questions benefit from all available perspectives.
+        message_lower = user_message.lower()
+        broad_analysis_keywords = (
+            "should i",
+            "what do you think",
+            "analyze",
+            "analyse",
+            "recommend",
+            "buy",
+            "sell",
+            "hold",
+            "invest in",
+        )
+        include_all_specialists = any(
+            keyword in message_lower for keyword in broad_analysis_keywords
+        )
+        has_company_target = bool(extract_company_symbols(user_message))
+
         keywords_mapping = {
             "market_research": [
                 "news", "sentiment", "analyst", "rating", "what's happening",
-                "latest", "should i", "outlook", "trend"
+                "latest", "outlook", "trend",
             ],
             "macro": [
-                "market", "economy", "fed", "interest", "inflation", "vix",
-                "conditions", "climate", "macro", "global"
+                "economy", "fed", "interest", "inflation", "vix",
+                "conditions", "macro", "global",
             ],
             "risk": [
                 "risk", "lose", "downside", "crash", "volatility", "exposure",
-                "danger", "safe", "limit"
+                "danger", "safe", "limit", "concentration",
             ],
             "valuation": [
                 "worth", "price", "valuation", "fair value", "expensive",
-                "cheap", "dcf", "multiple", "pe ratio"
+                "cheap", "dcf", "multiple", "pe ratio", "p/e",
+                "fundamental",
             ],
         }
 
-        message_lower = user_message.lower()
-
         for agent_name, keywords in keywords_mapping.items():
-            if agent_name in self.agents:
-                if any(keyword in message_lower for keyword in keywords):
-                    agents_to_run.append(self.agents[agent_name])
+            if agent_name not in self.agents:
+                continue
+            if include_all_specialists or any(
+                keyword in message_lower for keyword in keywords
+            ) or (agent_name == "market_research" and has_company_target):
+                agents_to_run.append(self.agents[agent_name])
 
         self.logger.info(
             f"Routing message to agents: {[a.name for a in agents_to_run]}"
@@ -78,7 +98,7 @@ class AgentRouter:
         self.agents[name] = agent
         self.logger.info(f"Registered agent: {name}")
 
-    def get_agent(self, name: str) -> BaseAgent:
+    def get_agent(self, name: str) -> Optional[BaseAgent]:
         """Get agent by name"""
         return self.agents.get(name)
 

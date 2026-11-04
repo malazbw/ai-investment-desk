@@ -3,28 +3,34 @@ API routes for portfolio management
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from decimal import Decimal
 from typing import List, Dict
 from datetime import date, datetime
-import asyncio
 import uuid
 import logging
 
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models import BrokerType, AssetType, TransactionType
 from app.schemas import (
     HoldingResponse, PortfolioSummary, TransactionResponse,
-    TransactionCreate, BrokerPortfolio
+    TransactionCreate,
 )
 from app.chat_schemas import ChatMessage, ChatResponse
-from app.services import PortfolioService, MacroDataService
-from app.services import ExchangeRateService, NewsService
+from app.services import PortfolioService, MacroDataService, SECFundamentalsService
+from app.services import EtoroPriceService, ExchangeRateService, NewsService
 from app.brokers import VirtualBroker
 from app.config import settings
-from app.agents import BaseAgent, AgentRouter, AgentContext, execute_agents_parallel
+from app.agents import (
+    AgentContext,
+    AgentRouter,
+    MacroContextAgent,
+    MarketResearchAgent,
+    RiskManagerAgent,
+    SynthesisAgent,
+    ValuationAgent,
+    execute_agents_parallel,
+)
 from app.agents.portfolio_agent import PortfolioAgent
 from app.llm.client import LLMClient
-from app.llm.prompts import SystemPrompts
 from app.llm.context_builder import ContextBuilder
 from app.llm.providers import LLMFactory
 
@@ -35,6 +41,8 @@ macro_router = APIRouter(prefix="/api/macro", tags=["macro"])
 exchange_rates_router = APIRouter(prefix="/api/exchange-rates", tags=["exchange-rates"])
 news_router = APIRouter(prefix="/api/news", tags=["news"])
 chat_router = APIRouter(prefix="/api/chat", tags=["chat"])
+prices_router = APIRouter(prefix="/api/prices", tags=["prices"])
+fundamentals_router = APIRouter(prefix="/api/fundamentals", tags=["fundamentals"])
 
 # Initialize brokers
 virtual_broker = VirtualBroker()
@@ -42,9 +50,13 @@ virtual_broker = VirtualBroker()
 # Initialize agents and router
 agents = {
     "portfolio": PortfolioAgent(),
-    # More agents will be added here (market_research, risk_manager, etc)
+    "market_research": MarketResearchAgent(),
+    "macro": MacroContextAgent(),
+    "risk": RiskManagerAgent(),
+    "valuation": ValuationAgent(),
 }
 agent_router = AgentRouter(agents)
+synthesis_agent = SynthesisAgent()
 
 # Initialize LLM client based on config
 llm_client = None
@@ -62,6 +74,20 @@ if settings.llm_provider.lower() == "claude":
             logger.error(f"Failed to initialize Claude: {e}")
     else:
         logger.warning("Claude provider selected but CLAUDE_API_KEY not set")
+elif settings.llm_provider.lower() == "gemini":
+    if settings.gemini_api_key:
+        try:
+            provider = LLMFactory.create_provider(
+                provider_type="gemini",
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+            )
+            llm_client = LLMClient(provider)
+            logger.info("LLM Provider: Gemini (%s)", settings.gemini_model)
+        except Exception as e:
+            logger.error("Failed to initialize Gemini: %s", e)
+    else:
+        logger.warning("Gemini provider selected but GEMINI_API_KEY not set")
 else:
     # Default to Ollama (free, local)
     try:
@@ -140,11 +166,17 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
             )
 
         # Update prices
+        observed_at = datetime.utcnow()
         prices_dict = {
-            h.symbol: (h.current_price, "virtual_broker")
+            h.symbol: (
+                h.current_price,
+                observed_at,
+                "virtual_broker",
+                h.currency,
+            )
             for h in holdings
         }
-        PortfolioService.update_prices(db, prices_dict)
+        PortfolioService.update_market_prices(db, prices_dict)
 
         return {
             "status": "synced",
@@ -259,6 +291,25 @@ def get_latest_exchange_rates(db: Session = Depends(get_db)):
     return ExchangeRateService(db).get_latest_rates()
 
 
+@fundamentals_router.post("/sync/sec")
+async def sync_sec_company_facts(db: Session = Depends(get_db)) -> Dict:
+    """Fetch the latest supported SEC company facts for held stocks and ETFs."""
+    if not settings.sec_user_agent or "@" not in settings.sec_user_agent:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Set SEC_USER_AGENT to an application name and contact email, "
+                "for example 'AI Investment Desk contact: you@example.com'."
+            ),
+        )
+    result = await SECFundamentalsService(
+        db, settings.sec_user_agent
+    ).sync_portfolio_facts()
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["message"])
+    return result
+
+
 @exchange_rates_router.get("/history/{base_currency}/{quote_currency}")
 def get_exchange_rate_history(
     base_currency: str,
@@ -326,9 +377,29 @@ def get_news_stats(db: Session = Depends(get_db)) -> Dict:
     return NewsService.get_news_stats(db)
 
 
+@prices_router.post("/sync/etoro")
+async def sync_etoro_prices(db: Session = Depends(get_db)) -> Dict:
+    """Fetch current eToro prices for held stocks, ETFs, and crypto in USD."""
+    if not settings.etoro_api_key or not settings.etoro_user_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Configure ETORO_API_KEY and ETORO_USER_KEY to fetch prices",
+        )
+    result = await EtoroPriceService(db).sync_portfolio_prices()
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result)
+    return result
+
+
+@prices_router.get("/latest")
+def get_latest_etoro_prices(db: Session = Depends(get_db)) -> List[Dict]:
+    """Get the latest stored eToro price for each tracked stock, ETF, and crypto."""
+    return EtoroPriceService.get_latest_portfolio_prices(db)
+
+
 # Chat endpoint
 @chat_router.post("/message", response_model=ChatResponse)
-async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
+async def chat_message(chat_msg: ChatMessage):
     """
     Main chat endpoint for portfolio analysis.
 
@@ -353,12 +424,18 @@ async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
         # Decide which agents to run
         agents_to_run = agent_router.decide_agents(chat_msg.message)
 
-        if chat_msg.include_agents:
-            # Override with specific agents
+        if chat_msg.include_agents is not None:
+            unknown_agents = sorted(
+                set(chat_msg.include_agents) - set(agent_router.list_agents())
+            )
+            if unknown_agents:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown agents: {', '.join(unknown_agents)}",
+                )
             agents_to_run = [
-                agent_router.get_agent(name)
+                agent_router.agents[name]
                 for name in chat_msg.include_agents
-                if agent_router.get_agent(name)
             ]
 
         if not agents_to_run:
@@ -372,7 +449,10 @@ async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
         # Create context for agents
         context = AgentContext(
             user_message=chat_msg.message,
-            metadata={"db": db}
+            metadata={
+                "db_factory": get_session_factory(),
+                "llm_client": llm_client,
+            },
         )
 
         # Execute agents in parallel
@@ -380,32 +460,44 @@ async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
 
         # Build context from agent outputs
         context_dict = ContextBuilder.build_context(agent_outputs)
-        context_text = ContextBuilder.format_for_prompt(context_dict)
 
         logger.info(f"Agent execution complete. Agents used: {[a.agent_name for a in agent_outputs]}")
 
-        # Send to LLM for analysis
-        response = await llm_client.analyze(
-            user_message=chat_msg.message,
-            system_prompt=SystemPrompts.GENERAL_ANALYST,
-            context=context_dict
+        synthesis_output = await synthesis_agent.execute(
+            AgentContext(
+                user_message=chat_msg.message,
+                metadata={
+                    "agent_outputs": context_dict,
+                    "llm_client": llm_client,
+                },
+            )
         )
+        if not synthesis_output.success:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Final response synthesis failed: {synthesis_output.error}",
+            )
+        context_dict["synthesis"] = synthesis_output.data
 
         logger.info(f"LLM response received for conversation {conversation_id}")
 
         # Return response
         return ChatResponse(
-            response=response,
+            response=synthesis_output.data["response"],
             conversation_id=conversation_id,
             analysis=context_dict,
             timestamp=datetime.utcnow(),
-            agents_used=[a.agent_name for a in agent_outputs]
+            agents_used=[
+                *[output.agent_name for output in agent_outputs],
+                synthesis_output.agent_name,
+            ],
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Chat processing failed: {str(e)}"
         )
-

@@ -3,7 +3,7 @@ Agent execution - runs agents in parallel
 """
 import asyncio
 import time
-from typing import List
+from typing import Callable, List, Optional
 from app.agents.base import BaseAgent, AgentContext, AgentOutput
 import logging
 
@@ -30,26 +30,58 @@ async def execute_agents_parallel(
 
     logger.info(f"Executing {len(agents)} agents in parallel")
 
-    # Execute all agents concurrently
-    tasks = [_execute_with_timing(agent, context) for agent in agents]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    session_factory = context.metadata.get("db_factory")
+    if "db" in context.metadata and not callable(session_factory):
+        logger.warning(
+            "Running agents sequentially because a shared database session was provided"
+        )
+        return [
+            await _run_agent(agent, context, None)
+            for agent in agents
+        ]
 
-    # Process results, handling exceptions
-    outputs = []
-    for agent, result in zip(agents, results):
-        if isinstance(result, Exception):
-            logger.error(f"Agent {agent.name} failed: {result}")
-            output = agent._create_output(
-                success=False,
-                data={},
-                error=str(result),
-            )
-        else:
-            output = result
-        outputs.append(output)
+    tasks = [
+        _run_agent(
+            agent,
+            context,
+            session_factory if callable(session_factory) else None,
+        )
+        for agent in agents
+    ]
+    outputs = await asyncio.gather(*tasks)
 
     logger.info(f"Agent execution completed. Results: {len(outputs)}")
     return outputs
+
+
+async def _run_agent(
+    agent: BaseAgent,
+    context: AgentContext,
+    session_factory: Optional[Callable],
+) -> AgentOutput:
+    db = session_factory() if session_factory is not None else None
+    agent_context = context
+    if db is not None:
+        metadata = {
+            key: value
+            for key, value in context.metadata.items()
+            if key != "db_factory"
+        }
+        metadata["db"] = db
+        agent_context = AgentContext(
+            user_message=context.user_message,
+            portfolio_data=context.portfolio_data,
+            metadata=metadata,
+        )
+
+    try:
+        return await _execute_with_timing(agent, agent_context)
+    except Exception as exc:
+        logger.error("Agent %s failed: %s", agent.name, exc)
+        return agent._create_output(success=False, data={}, error=str(exc))
+    finally:
+        if db is not None:
+            db.close()
 
 
 async def _execute_with_timing(

@@ -58,10 +58,15 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
           └──────────────────┘
                │
                ▼
+       ┌──────────────────────────┐
+       │ Synthesis Agent (LLM)    │
+       │ Combines findings,      │
+       │ conflicts and caveats   │
+       └────────────┬─────────────┘
+                    │
+                    ▼
           ┌──────────────────┐
-          │   Claude API     │
-          │  (Synthesizes    │
-          │   all data)      │
+          │ Final response   │
           └──────────────────┘
 ```
 
@@ -69,15 +74,11 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 
 1. **User Input** → Chat endpoint receives question
 2. **Agent Router** → Determines which agents to invoke
-3. **Agents Execute in Parallel** → Each fetches relevant data:
-   - Portfolio Agent: queries database
-   - Market Research Agent: calls news/analyst APIs
-   - Valuation Agent: builds models from public data
-   - Risk Manager Agent: evaluates constraints
-   - Macro Context Agent: fetches economic indicators
+3. **Agents Execute in Parallel** → Selected specialists read portfolio, stored news,
+   USD price coverage, valuation inputs, and stored macro indicators
 4. **Data Aggregation** → Combine all agent outputs
-5. **Claude Processing** → LLM synthesizes analysis
-6. **Response** → Return to user via chat interface
+5. **Synthesis Agent** → LLM combines findings, conflicts, failures, and limitations
+6. **Response** → Return final assessment and specialist data to user
 
 ---
 
@@ -87,7 +88,8 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 
 1. **Database Layer** (`app/models.py`)
    - Asset, Holding, Transaction models
-   - Price, PortfolioSnapshot tracking
+   - Price history with source currency and cached eToro instrument IDs
+   - PortfolioSnapshot tracking
    - MacroIndicator, ExchangeRate models
    - CompanyNews model
 
@@ -99,7 +101,7 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 
 3. **Data Pipeline** (`app/scheduler.py`)
    - Background scheduler for periodic updates
-   - Jobs: exchange rates, macro indicators, news
+   - Jobs: exchange rates, macro indicators, news, daily eToro prices
    - Cron-based execution
 
 4. **API Endpoints** (`app/routes.py`)
@@ -107,25 +109,33 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
    - Macro endpoints: `/api/macro/*`
    - Exchange rate endpoints: `/api/exchange-rates/*`
    - News endpoints: `/api/news/*`
+   - Price endpoints: `/api/prices/latest`, `/api/prices/sync/etoro`
    - Virtual broker sync: `/api/portfolio/sync/virtual`
 
-5. **Broker Integration Start**
+5. **Market Price Integration**
+   - eToro Public API client for instrument lookup and batched live rates
+   - Stock, ETF, and crypto prices normalized to USD using eToro conversion rates
+   - Daily scheduled sync when API credentials are configured
+   - Manual sync and latest-price API endpoints
+
+6. **Broker Integration Start**
    - VirtualBroker (testing)
    - Abstract broker interface
 
 ---
 
-### ❌ Not Implemented (Phase 1 Requirements)
+### Agent and Product Status
 
 #### 1. **Agent System** (Core - HIGH PRIORITY)
-   - [ ] Agent base class/interface
-   - [ ] Agent Router/Orchestrator
-   - [ ] Portfolio Agent (queries holdings)
-   - [ ] Market Research Agent (news + analyst)
-   - [ ] Valuation Agent (financial models)
-   - [ ] Risk Manager Agent (constraints)
-   - [ ] Macro Context Agent (economic data)
-   - [ ] Agent execution framework (parallel execution)
+   - [x] Agent base class/interface
+   - [x] Agent Router/Orchestrator
+   - [x] Portfolio Agent (queries holdings and transactions)
+   - [x] Market Research Agent (reads stored portfolio news; no sentiment/analyst source yet)
+   - [x] Valuation Agent (reports price inputs and explicitly missing fundamentals)
+   - [x] Risk Manager Agent (USD price coverage and position concentration)
+   - [x] Macro Context Agent (reports latest stored economic indicators)
+   - [x] Agent execution framework (parallel execution with isolated database sessions)
+   - [x] Synthesis Agent (combines specialist results into the final response)
 
 #### 2. **Chat Interface** (Frontend - HIGH PRIORITY)
    - [ ] Web chat UI component
@@ -134,17 +144,17 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
    - [ ] Error handling UI
 
 #### 3. **Claude Integration** (Core - HIGH PRIORITY)
-   - [ ] Claude API client wrapper
-   - [ ] System prompts per agent
-   - [ ] Context builder (format agent outputs for Claude)
-   - [ ] Response parsing and formatting
+   - [x] LLM client wrapper (Claude API and Ollama providers)
+   - [x] Analysis and synthesis system prompts
+   - [x] Context builder (aggregate agent outputs and errors)
+   - [x] Response parsing and formatting
 
 #### 4. **eToro Integration** (Data Source - HIGH PRIORITY)
-   - [ ] eToro API client
-   - [ ] Authentication/API key management
-   - [ ] Real-time price fetching (stocks, crypto)
+   - [x] eToro Public API client and API key configuration
+   - [x] Instrument lookup and real-time stock, ETF, and crypto prices in USD
+   - [x] Daily price ingestion and manual sync endpoint
    - [ ] Holdings synchronization
-   - [ ] News/market info from eToro
+   - [ ] News/market info from eToro (not in documented market-data API; use other providers)
 
 #### 5. **Real Broker Integrations** (Data Source - MEDIUM PRIORITY)
    - [ ] Scalable Capital API client
@@ -159,8 +169,8 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
    - [ ] Real-time news aggregation
 
 #### 7. **Context Builder** (Core - MEDIUM PRIORITY)
-   - [ ] Aggregate agent outputs
-   - [ ] Format for Claude consumption
+   - [x] Aggregate agent outputs and execution errors
+   - [x] Format outputs for the configured LLM provider
    - [ ] Relevance scoring/filtering
    - [ ] Context size optimization
 
@@ -173,27 +183,27 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 **Goal:** User can ask about portfolio, get AI-driven analysis
 
 #### Week 1: Agent Framework
-- [ ] Design agent base class
-- [ ] Implement agent router/orchestrator
-- [ ] Setup parallel execution (async)
-- [ ] Error handling & logging
+- [x] Design agent base class
+- [x] Implement agent router/orchestrator
+- [x] Setup parallel execution (async, isolated DB sessions)
+- [x] Error handling & logging
 
 #### Week 2: Portfolio Agent + Claude Integration
-- [ ] Build Portfolio Agent (queries DB)
-- [ ] Integrate Claude API
-- [ ] Create system prompts
-- [ ] Build context formatter
+- [x] Build Portfolio Agent (queries DB)
+- [x] Integrate LLM providers (Claude and Ollama)
+- [x] Create system prompts, including synthesis instructions
+- [x] Build context formatter
 
 #### Week 3: eToro Integration
-- [ ] Research eToro API
-- [ ] Build eToro client
-- [ ] Real-time price fetching
-- [ ] Test with sample data
+- [x] Research documented eToro API
+- [x] Build eToro market-data client
+- [x] Fetch and store USD-normalized prices
+- [x] Test with mocked API data
 
 #### Week 4: Chat Interface + Integration
 - [ ] Build simple web chat UI
-- [ ] Connect to backend
-- [ ] End-to-end testing
+- [x] Connect chat endpoint to specialist agents and Synthesis Agent
+- [ ] Full end-to-end testing
 - [ ] Deploy MVP
 
 ### Phase 2: Enhanced Analysis (Weeks 5-8)
@@ -201,24 +211,26 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 **Goal:** More sophisticated agents for deeper analysis
 
 #### Week 5: Market Research Agent
-- [ ] News aggregation
+- [x] Read stored portfolio news
 - [ ] Sentiment analysis
 - [ ] Analyst rating sources
 - [ ] Competitive intelligence
 
 #### Week 6: Valuation Agent
 - [ ] Financial data APIs
-- [ ] DCF model builder
+- [ ] DCF model builder (requires financial inputs)
 - [ ] Comparable analysis
 - [ ] Valuation scoring
 
 #### Week 7: Risk Manager Agent
-- [ ] Risk calculation engine
+- [x] USD-price coverage and basic concentration calculations
+- [ ] Broader risk calculation engine
 - [ ] Portfolio stress testing
 - [ ] Constraint validation
 - [ ] Diversification analysis
 
 #### Week 8: Macro Context Agent
+- [x] Report latest stored macro data
 - [ ] Enhanced macro data
 - [ ] Macro-to-portfolio correlation
 - [ ] Scenario analysis
@@ -258,6 +270,7 @@ agents/
 ├── valuation_agent.py      # Financial models
 ├── risk_manager_agent.py   # Risk analysis
 ├── macro_agent.py          # Economic data
+├── synthesis_agent.py      # Final cross-agent assessment
 └── execution.py            # Parallel execution
 ```
 
@@ -339,32 +352,21 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
 ### eToro API Capabilities
 
 1. **Prices** - Real-time stock & crypto quotes
-2. **Holdings** - User portfolio sync
-3. **News** - Market news feed
-4. **Research** - Company info, analyst ratings
-5. **Watchlists** - Custom asset tracking
+2. **Holdings** - User portfolio sync (not implemented)
+3. **Watchlists** - Custom asset tracking
 
-### Implementation Plan
+The documented market-data API does not provide company headlines, P/E, or
+financial-statement metrics. Use a separate news or fundamentals provider for
+those agent inputs.
+
+### Implemented Price Client
 
 ```python
 # app/brokers/etoro/client.py
 
-class eToroBroker:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.session = aiohttp.ClientSession()
-    
-    async def get_prices(self, symbols: List[str]) -> Dict[str, Price]:
-        """Fetch real-time prices for stocks/crypto"""
-        
-    async def get_holdings(self) -> List[Holding]:
-        """Get user portfolio"""
-        
-    async def get_news(self, symbol: str) -> List[NewsArticle]:
-        """Get recent news for asset"""
-        
-    async def get_fundamentals(self, symbol: str) -> CompanyFundamentals:
-        """Get company/asset fundamentals"""
+class EtoroMarketDataClient:
+    async def resolve_instrument_id(self, symbol: str) -> int | None: ...
+    async def get_quotes(self, instrument_ids: list[int]) -> dict[int, EtoroQuote]: ...
 ```
 
 ---
@@ -543,4 +545,3 @@ REACT_APP_API_URL=http://localhost:8000
    - [ ] eToro integration
    - [ ] Market Research Agent
    - [ ] Deploy MVP
-
