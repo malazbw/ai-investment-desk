@@ -54,7 +54,7 @@ class ClaudeProvider(LLMProvider):
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=2048,
+                max_tokens=1024,
                 system=system_prompt,
                 messages=[
                     {
@@ -65,10 +65,6 @@ class ClaudeProvider(LLMProvider):
             )
 
             response = message.content[0].text
-            if message.stop_reason == "max_tokens":
-                raise RuntimeError(
-                    "Claude response reached the output token limit before completion"
-                )
             self.logger.info("Claude response received")
             return response
 
@@ -88,83 +84,6 @@ class ClaudeProvider(LLMProvider):
             else:
                 lines.append(f"{key}: {value}")
 
-        return "\n".join(lines)
-
-
-class GeminiProvider(LLMProvider):
-    """Google Gemini Developer API provider."""
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "gemini-3.5-flash-lite",
-        api_url: str = "https://generativelanguage.googleapis.com/v1beta",
-    ):
-        import httpx
-
-        if not api_key:
-            raise ValueError("A Gemini API key is required")
-
-        self.api_key = api_key
-        self.model = model
-        self.api_url = api_url.rstrip("/")
-        self.client = httpx.AsyncClient(timeout=60.0)
-        self.logger = logger
-
-    async def analyze(
-        self,
-        user_message: str,
-        system_prompt: str,
-        context: Dict[str, Any],
-    ) -> str:
-        context_text = self._format_context(context)
-        full_user_message = f"{context_text}\n\nUser Question: {user_message}"
-
-        self.logger.info("Calling Gemini with model %s", self.model)
-        try:
-            response = await self.client.post(
-                f"{self.api_url}/models/{self.model}:generateContent",
-                headers={"x-goog-api-key": self.api_key},
-                json={
-                    "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    "contents": [
-                        {"role": "user", "parts": [{"text": full_user_message}]}
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.7,
-                        "topP": 0.9,
-                        "topK": 40,
-                        "maxOutputTokens": 2048,
-                    },
-                },
-            )
-            response.raise_for_status()
-            candidates = response.json().get("candidates", [])
-            if candidates and candidates[0].get("finishReason") == "MAX_TOKENS":
-                raise RuntimeError(
-                    "Gemini response reached the output token limit before completion"
-                )
-            parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-            generated_text = "\n".join(
-                part["text"] for part in parts if isinstance(part.get("text"), str)
-            ).strip()
-            if not generated_text:
-                raise ValueError("Gemini returned no text response")
-
-            self.logger.info("Gemini response received")
-            return generated_text
-        except Exception as e:
-            self.logger.error("Gemini API error: %s", e)
-            raise
-
-    def _format_context(self, context: Dict[str, Any]) -> str:
-        lines = []
-        for key, value in context.items():
-            if isinstance(value, dict):
-                lines.append(f"\n## {key}")
-                lines.extend(f"  {item_key}: {item_value}" for item_key, item_value in value.items())
-            else:
-                lines.append(f"{key}: {value}")
         return "\n".join(lines)
 
 
@@ -244,19 +163,82 @@ class OllamaProvider(LLMProvider):
         return "\n".join(lines)
 
 
+class GeminiProvider(LLMProvider):
+    """Google Gemini API provider (free, powerful)"""
+
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+        """
+        Initialize Gemini provider
+
+        Args:
+            api_key: Google API key from makersuite.google.com
+            model: Gemini model to use
+        """
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        self.client = genai.GenerativeModel(model)
+        self.logger = logger
+
+    async def analyze(
+        self,
+        user_message: str,
+        system_prompt: str,
+        context: Dict[str, Any],
+    ) -> str:
+        """Call Gemini API (synchronous call in async context)"""
+        context_text = self._format_context(context)
+        full_user_message = f"{context_text}\n\nUser Question: {user_message}"
+
+        self.logger.info(f"Calling Gemini")
+
+        try:
+            response = self.client.generate_content(
+                [system_prompt, full_user_message],
+                generation_config={
+                    "temperature": 0.7,
+                    "max_output_tokens": 1024,
+                }
+            )
+
+            if response.text:
+                self.logger.info("Gemini response received")
+                return response.text
+            else:
+                raise Exception("Empty response from Gemini")
+
+        except Exception as e:
+            self.logger.error(f"Gemini API error: {e}")
+            raise
+
+    def _format_context(self, context: Dict[str, Any]) -> str:
+        """Format agent outputs into readable context"""
+        lines = []
+
+        for key, value in context.items():
+            if isinstance(value, dict):
+                lines.append(f"\n## {key}")
+                for k, v in value.items():
+                    lines.append(f"  {k}: {v}")
+            else:
+                lines.append(f"{key}: {value}")
+
+        return "\n".join(lines)
+
+
 class LLMFactory:
     """Factory for creating LLM providers"""
 
     @staticmethod
     def create_provider(
-        provider_type: str = "ollama",
+        provider_type: str = "gemini",
         **kwargs
     ) -> LLMProvider:
         """
         Create LLM provider based on type
 
         Args:
-            provider_type: "claude", "gemini", or "ollama"
+            provider_type: "gemini", "claude" or "ollama"
             **kwargs: Provider-specific arguments
 
         Returns:
@@ -267,18 +249,15 @@ class LLMFactory:
                 api_key=kwargs.get("api_key"),
                 model=kwargs.get("model", "claude-opus-4-1"),
             )
-        elif provider_type.lower() == "gemini":
-            return GeminiProvider(
-                api_key=kwargs.get("api_key"),
-                model=kwargs.get("model", "gemini-3.5-flash-lite"),
-                api_url=kwargs.get(
-                    "api_url", "https://generativelanguage.googleapis.com/v1beta"
-                ),
-            )
         elif provider_type.lower() == "ollama":
             return OllamaProvider(
                 api_url=kwargs.get("api_url", "http://localhost:11434"),
                 model=kwargs.get("model", "mistral"),
+            )
+        elif provider_type.lower() == "gemini":
+            return GeminiProvider(
+                api_key=kwargs.get("api_key"),
+                model=kwargs.get("model", "gemini-2.0-flash"),
             )
         else:
             raise ValueError(f"Unknown provider type: {provider_type}")

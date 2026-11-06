@@ -90,15 +90,18 @@ async def _execute_with_timing(
 ) -> AgentOutput:
     """Execute agent and measure execution time"""
     start_time = time.time()
+    logger.info(f"[AGENT-EXEC] Starting {agent.name} agent")
     try:
         output = await agent.execute(context)
         execution_time = (time.time() - start_time) * 1000  # ms
         output.execution_time_ms = execution_time
         logger.info(
-            f"Agent {agent.name} completed in {execution_time:.2f}ms"
+            f"[AGENT-EXEC] ✓ {agent.name} completed in {execution_time:.2f}ms - success={output.success}"
         )
+        if output.success:
+            logger.debug(f"[AGENT-EXEC] {agent.name} output keys: {list(output.data.keys())}")
         return output
     except Exception as e:
         execution_time = (time.time() - start_time) * 1000
-        logger.error(f"Agent {agent.name} error after {execution_time:.2f}ms: {e}")
+        logger.error(f"[AGENT-EXEC] ✗ {agent.name} error after {execution_time:.2f}ms: {e}")
         raise

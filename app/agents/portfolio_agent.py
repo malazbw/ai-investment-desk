@@ -31,6 +31,8 @@ class PortfolioAgent(BaseAgent):
             AgentOutput with portfolio summary and holdings
         """
         start_time = time.time()
+        logger.info(f"[PortfolioAgent] Starting execution")
+        logger.info(f"[PortfolioAgent] Input message: {context.user_message}")
 
         try:
             db = context.metadata.get("db")
@@ -206,6 +208,9 @@ class PortfolioAgent(BaseAgent):
 
             execution_time = (time.time() - start_time) * 1000
 
+            logger.info(f"[PortfolioAgent] Successfully processed {len(holdings)} holdings")
+            logger.debug(f"[PortfolioAgent] Output data keys: {list(data.keys())}")
+
             return self._create_output(
                 success=True,
                 data=data,
@@ -215,6 +220,7 @@ class PortfolioAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Portfolio agent error: {e}")
             execution_time = (time.time() - start_time) * 1000
+            logger.error(f"[PortfolioAgent] Failed after {execution_time:.2f}ms: {e}")
             return self._create_output(
                 success=False,
                 data={},
