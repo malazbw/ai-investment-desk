@@ -214,7 +214,7 @@ frontend/
 
 ---
 
-## Phase 2 - Enhanced Analysis (Future)
+## Phase 2 - Market Intelligence and Specialist Analysis (Future)
 
 ### Task #8: Valuation Agent (MEDIUM PRIORITY)
 - Build DCF valuation models
@@ -250,9 +250,23 @@ frontend/
 
 ---
 
-## Phase 3 - Autonomous Trading (Future)
+## Phase 3 - AI Assistant (Can Start Before Phase 2 Is Complete)
 
-### Task #12: Trade Execution Framework
+### Task #12: Evidence-Grounded Assistant Workflow
+- Coordinate specialist selection and execution with LangGraph
+- Answer simple portfolio lookups directly from stored data
+- Synthesize findings only when multiple specialists are needed
+- Preserve source, date, currency, uncertainty, and missing-data caveats
+- Keep provider selection independent of the orchestration framework
+- Keep the assistant read-only; do not execute trades
+
+**Depends on:** Existing chat endpoint and specialist agents. Uses currently stored data when Phase 2 sources are incomplete.
+
+---
+
+## Phase 4 - Autonomous Trading (Future; Separate Product Scope)
+
+### Task #13: Trade Execution Framework
 - Order placement logic
 - Risk validation
 - Trade approval workflow
@@ -260,7 +274,7 @@ frontend/
 
 **Depends on:** All Phase 2 agents working
 
-### Task #13: Backtesting Engine
+### Task #14: Backtesting Engine
 - Strategy replay
 - Historical performance
 - Monte Carlo simulations
@@ -268,7 +282,7 @@ frontend/
 
 **Depends on:** Valuation + Risk agents
 
-### Task #14: Agent Capital Allocation
+### Task #15: Agent Capital Allocation
 - Data model for agent budgets
 - Trade tracking per agent
 - P&L calculation

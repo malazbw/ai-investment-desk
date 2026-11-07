@@ -127,3 +127,27 @@ def test_macro_sync_reports_empty_observations_instead_of_success():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_macro_sync_reports_partial_series_failures():
+    engine, db = make_session()
+    service = MacroDataService(db, "test-key")
+
+    try:
+        with patch.object(
+            service.fred,
+            "fetch_daily_series",
+            return_value={
+                "VIXCLS": [("2026-10-30", Decimal("20"))],
+                "DFF": [],
+                "DGS10": [("2026-10-30", Decimal("4.1"))],
+            },
+        ):
+            result = service.fetch_and_store_daily_macro()
+
+        assert result["status"] == "partial"
+        assert result["series_without_observations"] == ["DFF"]
+        assert db.query(MacroIndicator).count() == 2
+    finally:
+        db.close()
+        engine.dispose()

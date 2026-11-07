@@ -67,7 +67,7 @@ python run.py
 ### Phase 3: AI Assistant
 - LLM integration
 - Portfolio analysis
-- Investment recommendations
+- Evidence-grounded decision support (read-only; no trade execution)
 
 ### Phase 4: Trading Automation
 - Strategy backtesting

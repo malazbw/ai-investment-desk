@@ -102,8 +102,13 @@ def _run_macro_job(session_factory: Callable, api_key: str, monthly: bool) -> No
             if monthly
             else service.fetch_and_store_daily_macro()
         )
-        if result["status"] != "success":
+        if result["status"] == "error":
             logger.error("Scheduled macro job failed: %s", result["message"])
+        elif result["status"] == "partial":
+            logger.warning(
+                "Scheduled macro job completed with missing series: %s",
+                result["series_without_observations"],
+            )
     finally:
         db.close()
 
@@ -113,13 +118,15 @@ def _run_news_job(session_factory: Callable) -> None:
     db = session_factory()
     try:
         result = asyncio.run(NewsService.fetch_and_store_portfolio_news(db, days=7))
-        if result["status"] != "success":
+        if result["status"] == "error":
             logger.error("Daily news job failed: %s", result.get("message", "Unknown error"))
         else:
             logger.info(
                 f"Daily news job complete: {result['articles_stored']} articles stored "
                 f"for {result['symbols']} symbols"
             )
+            if result["status"] == "partial":
+                logger.warning("Daily news job had partial failures: %s", result["errors"])
     except Exception as e:
         logger.error(f"Error in news job: {e}")
     finally:

@@ -17,20 +17,23 @@
         let portfolioData = null;
         let holdings = [];
         let newsData = {};
+        let dataStatus = {};
         let conversationId = localStorage.getItem("conversationId") || "default";
 
         // Fetch portfolio on load
         async function loadPortfolio() {
             try {
-                const [summary, holdingsRes, news] = await Promise.all([
+                const [summary, holdingsRes, news, status] = await Promise.all([
                     axios.get(`${API_BASE}/portfolio/summary`),
                     axios.get(`${API_BASE}/portfolio/holdings`),
-                    axios.get(`${API_BASE}/news/portfolio?limit=50`)
+                    axios.get(`${API_BASE}/news/portfolio?limit=50`),
+                    axios.get(`${API_BASE}/portfolio/data-status`)
                 ]);
 
                 portfolioData = summary.data;
                 holdings = holdingsRes.data;
                 newsData = news.data;
+                dataStatus = status.data;
 
                 render();
             } catch (error) {
@@ -40,16 +43,43 @@
         }
 
         // Format currency
-        function formatCurrency(value) {
+        function formatCurrency(value, currency = "USD") {
+            if (value === null || value === undefined || !currency) {
+                return "Unavailable";
+            }
             return new Intl.NumberFormat('en-US', {
                 style: 'currency',
-                currency: 'USD',
+                currency,
                 minimumFractionDigits: 2
             }).format(value);
         }
 
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>"']/g, character => ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;"
+            })[character]);
+        }
+
+        function freshnessLabel(status) {
+            return ({
+                fresh: "Fresh",
+                stale: "Stale",
+                not_synced: "Not synced"
+            })[status] || "Unavailable";
+        }
+
         // Render dashboard
         function render() {
+            const summaryCurrency = portfolioData.currency;
+            const summaryWarning = portfolioData.valuation_status === "mixed_currency"
+                ? "Totals are unavailable because holdings or prices use different currencies. Convert currencies before comparing them."
+                : portfolioData.valuation_status === "partial"
+                    ? `Some holdings have no usable price: ${(portfolioData.unpriced_holdings || []).map(escapeHtml).join(", ")}. Total gain/loss is unavailable.`
+                    : "";
             const html = `
                 <div class="min-h-screen bg-gray-50">
                     <!-- Header -->
@@ -68,12 +98,13 @@
                                 <div class="grid grid-cols-2 gap-4 mb-8">
                                     <div class="bg-white rounded-lg shadow p-6">
                                         <p class="text-gray-600 text-sm">Total Value</p>
-                                        <p class="text-2xl font-bold text-gray-900">${formatCurrency(portfolioData.total_value)}</p>
+                                        <p class="text-2xl font-bold text-gray-900">${formatCurrency(portfolioData.total_value, summaryCurrency)}</p>
+                                        <p class="text-xs text-gray-500 mt-1">${escapeHtml(summaryCurrency || "Currency unavailable")}</p>
                                     </div>
                                     <div class="bg-white rounded-lg shadow p-6">
                                         <p class="text-gray-600 text-sm">Total Gain/Loss</p>
-                                        <p class="text-2xl font-bold ${portfolioData.total_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                            ${formatCurrency(portfolioData.total_gain_loss)} (${portfolioData.total_gain_loss_percent.toFixed(2)}%)
+                                        <p class="text-2xl font-bold ${portfolioData.total_gain_loss !== null && portfolioData.total_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                            ${portfolioData.total_gain_loss === null ? "Unavailable" : `${formatCurrency(portfolioData.total_gain_loss, summaryCurrency)} (${Number(portfolioData.total_gain_loss_percent).toFixed(2)}%)`}
                                         </p>
                                     </div>
                                     <div class="bg-white rounded-lg shadow p-6">
@@ -85,6 +116,21 @@
                                         <p class="text-2xl font-bold text-gray-900">${portfolioData.assets_count}</p>
                                     </div>
                                 </div>
+                                ${summaryWarning ? `<p class="mb-6 rounded bg-amber-50 p-3 text-sm text-amber-900">${summaryWarning}</p>` : ""}
+
+                                <section class="bg-white rounded-lg shadow p-6 mb-8">
+                                    <h2 class="text-xl font-bold text-gray-900 mb-4">Data status</h2>
+                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                        ${Object.entries(dataStatus).map(([name, item]) => `
+                                            <div class="rounded border p-3">
+                                                <p class="text-sm font-semibold text-gray-800">${escapeHtml(name.replaceAll("_", " "))}</p>
+                                                <p class="text-sm ${item.status === "stale" || item.status === "not_synced" ? "text-amber-700" : "text-green-700"}">${freshnessLabel(item.status)}</p>
+                                                <p class="text-xs text-gray-500">${escapeHtml(item.source || "No source")}</p>
+                                                <p class="text-xs text-gray-500">${escapeHtml(item.observed_at || "No observation")}</p>
+                                            </div>
+                                        `).join("")}
+                                    </div>
+                                </section>
 
                                 <!-- Holdings Table -->
                                 <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
@@ -106,15 +152,18 @@
                                             <tbody class="divide-y">
                                                 ${holdings.map(h => `
                                                     <tr class="hover:bg-gray-50">
-                                                        <td class="px-6 py-4 font-semibold text-gray-900">${h.asset?.symbol || 'N/A'}</td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">${parseFloat(h.quantity).toFixed(2)}</td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">${h.current_price ? formatCurrency(h.current_price) : 'N/A'}</td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">${h.current_value ? formatCurrency(h.current_value) : 'N/A'}</td>
-                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                                            ${h.gain_loss ? formatCurrency(h.gain_loss) : 'N/A'}
+                                                        <td class="px-6 py-4 font-semibold text-gray-900">${escapeHtml(h.asset?.symbol || 'N/A')}</td>
+                                                        <td class="px-6 py-4 text-right text-gray-600">${Number(h.quantity).toLocaleString('en-US', { maximumFractionDigits: 8 })}</td>
+                                                        <td class="px-6 py-4 text-right text-gray-600">
+                                                            ${h.current_price !== null ? formatCurrency(h.current_price, h.price_currency || h.asset?.currency) : 'N/A'}
+                                                            <span class="block text-xs text-gray-500">${escapeHtml(h.price_source || "No source")} · ${escapeHtml(h.price_date || "No date")} · ${freshnessLabel(h.price_freshness)}</span>
                                                         </td>
-                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss_percent >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                                            ${h.gain_loss_percent ? h.gain_loss_percent.toFixed(2) : 'N/A'}%
+                                                        <td class="px-6 py-4 text-right text-gray-600">${h.current_value !== null ? formatCurrency(h.current_value, h.price_currency || h.asset?.currency) : 'N/A'}</td>
+                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss === null ? 'text-gray-500' : h.gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                                            ${h.gain_loss !== null ? formatCurrency(h.gain_loss, h.asset?.currency) : 'N/A'}
+                                                        </td>
+                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss_percent === null ? 'text-gray-500' : h.gain_loss_percent >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                                            ${h.gain_loss_percent !== null ? Number(h.gain_loss_percent).toFixed(2) : 'N/A'}%
                                                         </td>
                                                     </tr>
                                                 `).join('')}
@@ -129,7 +178,7 @@
                                 <div class="bg-white rounded-lg shadow h-full flex flex-col">
                                     <div class="px-6 py-4 border-b">
                                         <h2 class="text-xl font-bold text-gray-900">Ask Agents</h2>
-                                        <p class="text-sm text-gray-600 mt-1">AI powered by Gemini</p>
+                                        <p class="text-sm text-gray-600 mt-1">AI-powered portfolio research</p>
                                     </div>
 
                                     <!-- Chat Messages -->
@@ -192,7 +241,7 @@
                 // Show loading
                 const loadingMsg = document.createElement("div");
                 loadingMsg.className = "bg-gray-100 p-3 rounded text-sm text-gray-900 italic";
-                loadingMsg.textContent = "Agents analyzing with Gemini AI...";
+                loadingMsg.textContent = "Analyzing the available portfolio data...";
                 messagesDiv.appendChild(loadingMsg);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
@@ -209,13 +258,13 @@
                 if (result.response) {
                     // Show agents used
                     const agentsMsg = document.createElement("div");
-                    agentsMsg.className = "bg-purple-100 p-2 rounded text-xs text-gray-600 mb-2";
+                    agentsMsg.className = "bg-purple-100 p-2 rounded text-xs text-gray-700 mb-2 break-words";
                     agentsMsg.innerHTML = `<strong>Agents:</strong> ${(result.agents_used || []).join(", ")}`;
                     messagesDiv.appendChild(agentsMsg);
 
                     // Show LLM response
                     const botMsg = document.createElement("div");
-                    botMsg.className = "bg-green-100 p-3 rounded text-sm text-gray-900 max-w-xs whitespace-pre-wrap";
+                    botMsg.className = "bg-green-100 p-4 rounded text-base leading-relaxed text-gray-900 max-w-full whitespace-pre-wrap break-words";
                     botMsg.textContent = result.response;
                     messagesDiv.appendChild(botMsg);
 

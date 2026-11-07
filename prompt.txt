@@ -1,0 +1,616 @@
+# AI Investment Desk — Full Codebase Audit & Architecture Gap Analysis
+
+Act as a Senior Python Architect, AI Agent Systems Engineer, Financial Software Architect, and Code Auditor.
+
+I am developing an application called **AI Investment Desk**. I want you to thoroughly inspect the existing codebase and determine what needs to be improved, added, modified, or removed to evolve it into a comprehensive AI-powered investment intelligence platform.
+
+**IMPORTANT: This is an assessment-only task. Do not modify, delete, create, or refactor any project files. Do not install packages. Do not change the database. First understand the existing implementation and produce a detailed technical assessment.**
+
+---
+
+# 1. Product Vision
+
+AI Investment Desk is intended to be a personal AI-powered investment portfolio tracking, financial research, and investment intelligence platform.
+
+The application should help users:
+
+- Monitor and analyse their investment portfolios.
+- Research companies and understand their businesses.
+- Collect and understand financial news.
+- Analyse financial statements and company valuations.
+- Identify investment and portfolio risks.
+- Understand financial markets and macroeconomic conditions.
+- Conduct comprehensive investment due diligence.
+- Compare investment opportunities.
+- Receive personalized investment research and portfolio insights.
+
+The application is an investment research and decision-support tool, not a broker or trading platform.
+
+It must not execute trades or make unsupported guarantees about investment returns.
+
+# 2. Preferred AI Architecture
+
+I have decided to use the LangChain ecosystem.
+
+The preferred technologies are:
+
+- LangChain: Agent development, model integrations, tool calling and reusable components.
+- LangGraph: Multi-agent orchestration, workflow management, state, checkpointing, and execution control.
+- Deep Agents: Complex autonomous research, planning, delegation, subagents and context management.
+- LangSmith: Optional tracing, monitoring, debugging and agent evaluation.
+
+Do not introduce Microsoft Agent Framework.
+
+Do not assume all three LangChain components must be used everywhere. Evaluate where each is actually appropriate.
+
+The existing application supports or intends to support multiple LLM providers, including:
+
+- Google Gemini
+- Anthropic Claude
+- Ollama
+
+Inspect the current implementation and determine how to preserve model-provider flexibility.
+
+Avoid unnecessary vendor lock-in.
+
+# 3. Target Specialist Agent Architecture
+
+The target architecture consists of one central AI orchestrator and six specialist agents.
+
+## A. AI Orchestrator
+
+Responsibilities:
+
+- Understand user questions and intent.
+- Determine whether a request needs a simple agent call or a complex workflow.
+- Select the appropriate specialist agents.
+- Create investigation plans.
+- Delegate tasks.
+- Execute independent tasks in parallel where appropriate.
+- Manage task dependencies.
+- Validate agent outputs.
+- Handle errors, missing data and conflicting findings.
+- Combine results into a coherent response.
+- Maintain conversation and research context.
+
+Evaluate whether the current application already implements these capabilities.
+
+## B. Portfolio Agent
+
+Responsibilities:
+
+- Retrieve portfolio holdings.
+- Analyse transactions.
+- Calculate portfolio value.
+- Calculate realized and unrealized P&L.
+- Analyse asset and sector allocation.
+- Analyse portfolio performance.
+- Compare historical portfolio snapshots.
+- Identify concentration and exposure.
+
+Expected tools may include:
+
+- get_holdings
+- get_transactions
+- get_portfolio_value
+- get_portfolio_allocation
+- calculate_realized_pnl
+- calculate_unrealized_pnl
+- calculate_portfolio_returns
+- get_portfolio_snapshots
+- get_sector_exposure
+
+## C. Research Agent
+
+Responsibilities:
+
+- Research companies and business models.
+- Analyse company revenue segments.
+- Identify competitors.
+- Understand industry dynamics.
+- Analyse competitive advantages.
+- Retrieve company profiles.
+- Research corporate developments.
+- Review SEC filings.
+- Investigate management and business strategy.
+
+Expected tools may include:
+
+- search_company
+- get_company_profile
+- get_competitors
+- get_company_news
+- get_sec_filings
+- get_sec_filing_content
+- get_industry_data
+- search_research_sources
+- get_corporate_actions
+
+IMPORTANT: Company Research & Intelligence is a reusable research capability. It is not the same as Investment Due Diligence.
+
+## D. News Intelligence Agent
+
+Responsibilities:
+
+- Retrieve financial and company news.
+- Identify relevant companies and entities.
+- Classify financial events.
+- Detect duplicate stories.
+- Analyse news sentiment.
+- Identify significant developments.
+- Explain potential financial implications.
+- Connect news to portfolio holdings.
+- Generate personalized news briefings.
+
+Expected tools may include:
+
+- fetch_news
+- fetch_rss
+- extract_article_text
+- extract_entities
+- classify_news
+- analyze_news_sentiment
+- detect_duplicates
+- extract_events
+- extract_key_facts
+- score_relevance
+- map_to_portfolio
+- analyze_news_impact
+- generate_news_briefing
+
+Distinguish between collecting headlines and actually understanding their investment implications.
+
+## E. Valuation Agent
+
+Responsibilities:
+
+- Analyse financial statements.
+- Evaluate revenue and earnings growth.
+- Analyse profitability and margins.
+- Evaluate balance sheets and debt.
+- Analyse cash flow.
+- Calculate financial ratios.
+- Perform discounted cash flow analysis.
+- Compare company valuation multiples.
+- Perform valuation sensitivity analysis.
+
+Expected tools may include:
+
+- get_income_statement
+- get_balance_sheet
+- get_cash_flow_statement
+- get_financial_facts
+- calculate_financial_ratios
+- calculate_revenue_growth
+- calculate_free_cash_flow
+- calculate_dcf
+- calculate_pe_ratio
+- calculate_ev_ebitda
+- compare_valuation_multiples
+- run_dcf_sensitivity
+
+Financial calculations must be deterministic Python functions, not invented by LLMs.
+
+## F. Risk Agent
+
+Responsibilities:
+
+- Analyse portfolio concentration.
+- Calculate volatility.
+- Calculate beta.
+- Analyse correlations.
+- Calculate maximum drawdown.
+- Calculate VaR and expected shortfall.
+- Identify sector and asset exposure.
+- Perform stress tests.
+- Run scenario analysis.
+- Identify company-specific risks.
+
+Expected tools may include:
+
+- get_historical_returns
+- calculate_volatility
+- calculate_beta
+- calculate_correlation_matrix
+- calculate_max_drawdown
+- calculate_var
+- calculate_expected_shortfall
+- calculate_concentration
+- calculate_risk_contribution
+- run_stress_test
+- run_scenario_simulation
+
+## G. Market & Macro Agent
+
+Responsibilities:
+
+- Monitor market indices.
+- Analyse market movements.
+- Retrieve economic indicators.
+- Monitor inflation and interest rates.
+- Analyse employment data.
+- Analyse yield curves.
+- Monitor FX rates.
+- Understand macroeconomic trends.
+- Evaluate potential portfolio macro exposure.
+
+Expected tools may include:
+
+- get_market_indices
+- get_market_prices
+- get_economic_indicators
+- get_interest_rates
+- get_inflation_data
+- get_employment_data
+- get_yield_curve
+- get_fx_rates
+- get_macro_history
+- analyze_macro_trends
+- analyze_macro_exposure
+
+# 4. Investment Workflows
+
+Due diligence is a coordinated workflow, not another permanent specialist agent.
+
+Evaluate the existing architecture for implementing these workflows:
+
+1. Company Due Diligence.
+2. Investment Opportunity Analysis.
+3. Daily Portfolio News Briefing.
+4. Portfolio Health Check.
+5. Earnings Analysis.
+6. Company Comparison.
+
+For example, Company Due Diligence should coordinate:
+
+- Research Agent.
+- News Intelligence Agent.
+- Valuation Agent.
+- Risk Agent.
+- Market & Macro Agent.
+- Portfolio Agent where portfolio suitability is relevant.
+
+The workflow should support:
+
+- Structured investigation plans.
+- Parallel research tasks.
+- Sequential tasks where dependencies exist.
+- Dynamic follow-up investigations.
+- Evidence validation.
+- Contradiction detection.
+- Missing-data identification.
+- Structured report generation.
+- Persistent research history.
+
+Investigate how LangGraph and Deep Agents could support these requirements without unnecessarily duplicating functionality.
+
+# 5. External Data Integrations
+
+Inspect all existing integrations and determine their actual implementation status.
+
+Expected providers include:
+
+- SEC EDGAR: Company filings and financial facts.
+- FRED: Economic data.
+- NewsAPI: Financial news.
+- eToro or another market-data provider: Market quotes and pricing.
+- Frankfurter: Foreign exchange reference rates.
+- Optional research API: Extended web research and evidence gathering.
+
+For every integration, determine:
+
+- Whether it is implemented.
+- Whether it is actually called by the application.
+- Which agents use it.
+- What data it returns.
+- Whether it stores data in the database.
+- Whether it handles errors and rate limits.
+- Whether it provides historical data.
+- Whether data freshness is tracked.
+- Whether source attribution is preserved.
+
+Do not assume an API integration is functional just because a provider configuration or wrapper exists.
+
+# 6. Shared Services and Tool Architecture
+
+Evaluate whether the application has reusable shared services.
+
+The desired services include:
+
+- Portfolio Service.
+- Market Data Service.
+- Financial Data Service.
+- News Ingestion and Processing Service.
+- Company Research Service.
+- Valuation Service.
+- Risk Analytics Service.
+- Economic Data Service.
+- Evidence and Source Validation Service.
+
+Check whether multiple agents duplicate the same API calls or calculations.
+
+Determine whether tools are properly separated from agents.
+
+Recommend a clean architecture where:
+
+- Agents understand tasks and interpret results.
+- Tools expose controlled operations.
+- Python services perform deterministic business logic.
+- External APIs provide source data.
+- LangGraph coordinates workflows.
+- Deep Agents handle complex autonomous research where justified.
+
+# 7. Database Audit
+
+Inspect the existing database models, migrations, schema and repositories.
+
+Evaluate coverage of these logical domains:
+
+Portfolio:
+- users
+- assets
+- holdings
+- transactions
+- portfolio_snapshots
+
+Market data:
+- prices
+- historical_prices
+- fx_rates
+
+Financial data:
+- financial_statements
+- financial_facts
+- financial_ratios
+
+News:
+- news_articles
+- news_sources
+- news_entities
+- news_events
+- news_classifications
+- news_impact_assessments
+
+Research:
+- company_profiles
+- competitors
+- corporate_actions
+
+AI research:
+- research_runs
+- research_tasks
+- research_findings
+- research_reports
+
+Evidence:
+- research_sources
+- claim_evidence
+
+Operations:
+- agent_traces
+- tool_executions
+- ingestion_runs
+
+These are suggested logical entities, not mandatory table names.
+
+Identify what already exists, what is missing, and what should be extended rather than duplicated.
+
+Evaluate:
+- Data relationships.
+- Database indexes.
+- Historical data retention.
+- Data provenance.
+- Timestamp handling.
+- User isolation.
+- Migration strategy.
+- Data quality and validation.
+
+Do not create or modify any tables.
+
+# 8. News Intelligence Deep Dive
+
+Give particular attention to the news architecture.
+
+Determine whether the current application can:
+
+1. Collect news from multiple sources.
+2. Normalize and store articles.
+3. Detect duplicates.
+4. Identify companies and financial entities.
+5. Detect underlying financial events.
+6. Classify event types.
+7. Analyse sentiment and relevance.
+8. Connect news to portfolio holdings.
+9. Assess potential financial impact.
+10. Store historical news and event analysis.
+
+Recommend how to build a news intelligence pipeline rather than simply sending headlines to an LLM.
+
+Consider source reliability, licensing and the availability of full article text.
+
+# 9. AI Reliability and Observability
+
+Evaluate:
+
+- Agent permissions.
+- Tool permissions.
+- Prompt injection protection.
+- LLM output validation.
+- Structured agent response schemas.
+- Data freshness checks.
+- Source attribution.
+- Financial calculation validation.
+- Error handling and retries.
+- Workflow checkpointing.
+- Logging and tracing.
+- Token and API cost monitoring.
+- Agent evaluation and testing.
+
+All specialist agents should initially operate in read-only mode.
+
+No agent should execute financial transactions or modify portfolio holdings.
+
+# 10. Frontend and User Experience
+
+Inspect the existing frontend and identify which capabilities are already available.
+
+Evaluate whether the application supports:
+
+- Portfolio dashboard.
+- AI investment chat.
+- Company research workspace.
+- Financial analysis pages.
+- News intelligence feed.
+- Due diligence reports.
+- Portfolio risk dashboard.
+- Historical research reports.
+
+Recommend improvements, but do not modify the frontend.
+
+# 11. Required Audit Deliverables
+
+Produce a comprehensive report with the following sections.
+
+## A. Executive Summary
+
+Explain the current application architecture, its strengths and major limitations.
+
+## B. Existing Architecture Map
+
+Show the actual current architecture, not the proposed future architecture.
+
+Identify the main files, modules, services, agents, tools and data flows.
+
+## C. Existing Agent Inventory
+
+For every existing agent, document:
+
+- File location.
+- Purpose.
+- Responsibilities.
+- Available tools.
+- Model configuration.
+- Database access.
+- External API access.
+- Current implementation status.
+- Missing capabilities.
+
+## D. Existing Tool Inventory
+
+Create a table of all existing tools and identify which agents use them.
+
+## E. Database Gap Analysis
+
+Compare the current schema against the proposed requirements.
+
+## F. API and Data Source Audit
+
+Identify working, incomplete, unused and missing integrations.
+
+## G. Agent Framework Assessment
+
+Evaluate the suitability of:
+
+- LangChain.
+- LangGraph.
+- Deep Agents.
+- LangSmith.
+
+Determine what is already implemented and what would need to be added.
+
+Do not recommend replacing working code without a clear technical reason.
+
+## H. Duplication and Technical Debt
+
+Identify:
+
+- Duplicate business logic.
+- Duplicate API integrations.
+- Duplicate calculations.
+- Unnecessary agent responsibilities.
+- Circular dependencies.
+- Unused code.
+- Architectural inconsistencies.
+
+## I. Missing Capabilities
+
+Identify all major functional gaps.
+
+## J. Proposed Target Architecture
+
+Provide a recommended architecture that evolves the existing application into the target AI Investment Desk.
+
+## K. File-by-File Change Plan
+
+For every proposed modification, specify:
+
+- Existing file path.
+- What the file currently does.
+- What needs to change.
+- Why the change is required.
+- Dependencies.
+- Priority.
+
+For every proposed new file, specify:
+
+- Suggested path.
+- Responsibility.
+- Main classes/functions.
+- Dependencies.
+
+## L. Database Migration Plan
+
+Identify necessary schema changes and explain migration dependencies.
+
+Do not execute migrations.
+
+## M. Phased Implementation Roadmap
+
+Prioritize work in these stages:
+
+1. Existing architecture stabilization.
+2. Shared data services and tools.
+3. Specialist agent improvements.
+4. LangChain/LangGraph/Deep Agents integration.
+5. Investment workflows.
+6. Evidence, reporting and observability.
+7. Testing and production readiness.
+
+For each stage, provide dependencies, estimated complexity and acceptance criteria.
+
+## N. Risk Assessment
+
+Identify technical, financial-data, AI reliability, privacy, security and external-provider risks.
+
+## O. Testing Strategy
+
+Recommend unit, integration, workflow, agent and end-to-end tests.
+
+# 12. Audit Rules
+
+These rules are mandatory:
+
+1. Inspect the actual code before making architectural conclusions.
+2. Never claim a feature exists based only on filenames, comments or documentation.
+3. Distinguish implemented, partially implemented, configured but unused, and missing functionality.
+4. Reference actual file paths and relevant classes/functions wherever possible.
+5. Identify dead code and unused integrations.
+6. Avoid unnecessary abstractions and excessive numbers of agents.
+7. Reuse existing working components wherever possible.
+8. Keep deterministic financial calculations outside LLM reasoning.
+9. Preserve existing Gemini, Claude and Ollama flexibility where feasible.
+10. Do not introduce Microsoft Agent Framework.
+11. Do not install dependencies.
+12. Do not modify files, configurations or databases.
+13. Do not expose secrets or print API keys during inspection.
+14. Clearly separate confirmed findings from recommendations and assumptions.
+
+If the project is too large to inspect in one pass, work module by module and maintain an inventory of inspected and uninspected areas.
+
+# Final Objective
+
+I want a precise, evidence-based understanding of what already exists in AI Investment Desk and what we must do to evolve it into a robust, modular, multi-agent investment intelligence platform using the LangChain ecosystem.
+
+The most important outcome is not a generic architecture proposal. It is a practical, codebase-specific assessment and a prioritized implementation plan that tells me exactly what to change, where to change it, why it needs changing and how to verify the result.
+
+**Remember: AUDIT ONLY. Do not modify the project.**

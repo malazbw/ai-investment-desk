@@ -4,6 +4,7 @@ LLM abstraction layer - supports multiple providers
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import logging
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,9 @@ class OllamaProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider (free, powerful)"""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+    API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self, api_key: str, model: str = "gemini-3.5-flash-lite"):
         """
         Initialize Gemini provider
 
@@ -174,10 +177,11 @@ class GeminiProvider(LLMProvider):
             api_key: Google API key from makersuite.google.com
             model: Gemini model to use
         """
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        self.client = genai.GenerativeModel(model)
+        if not api_key:
+            raise ValueError("A Gemini API key is required")
+        self.api_key = api_key
+        self.model = model
+        self.client = httpx.AsyncClient(timeout=60.0)
         self.logger = logger
 
     async def analyze(
@@ -186,30 +190,50 @@ class GeminiProvider(LLMProvider):
         system_prompt: str,
         context: Dict[str, Any],
     ) -> str:
-        """Call Gemini API (synchronous call in async context)"""
+        """Call Gemini's generateContent API asynchronously."""
         context_text = self._format_context(context)
         full_user_message = f"{context_text}\n\nUser Question: {user_message}"
 
-        self.logger.info(f"Calling Gemini")
-
+        response = await self.client.post(
+            f"{self.API_BASE_URL}/models/{self.model}:generateContent",
+            headers={"x-goog-api-key": self.api_key},
+            json={
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": full_user_message}],
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 2048,
+                },
+            },
+        )
+        response.raise_for_status()
         try:
-            response = self.client.generate_content(
-                [system_prompt, full_user_message],
-                generation_config={
-                    "temperature": 0.7,
-                    "max_output_tokens": 1024,
-                }
-            )
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Gemini returned invalid JSON") from exc
 
-            if response.text:
-                self.logger.info("Gemini response received")
-                return response.text
-            else:
-                raise Exception("Empty response from Gemini")
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            raise RuntimeError("Gemini returned no response candidates")
+        candidate = candidates[0]
+        if candidate.get("finishReason") == "MAX_TOKENS":
+            raise RuntimeError("Gemini response exceeded the output token limit")
 
-        except Exception as e:
-            self.logger.error(f"Gemini API error: {e}")
-            raise
+        parts = candidate.get("content", {}).get("parts", [])
+        text = "".join(
+            part["text"]
+            for part in parts
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ).strip()
+        if not text:
+            raise RuntimeError("Gemini returned an empty response")
+        self.logger.info("Gemini response received")
+        return text
 
     def _format_context(self, context: Dict[str, Any]) -> str:
         """Format agent outputs into readable context"""
@@ -257,7 +281,7 @@ class LLMFactory:
         elif provider_type.lower() == "gemini":
             return GeminiProvider(
                 api_key=kwargs.get("api_key"),
-                model=kwargs.get("model", "gemini-2.0-flash"),
+                model=kwargs.get("model", "gemini-3.5-flash-lite"),
             )
         else:
             raise ValueError(f"Unknown provider type: {provider_type}")

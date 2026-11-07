@@ -63,61 +63,63 @@ class PortfolioAgent(BaseAgent):
                     {
                         "symbol": asset.symbol if asset else "unknown",
                         "name": asset.name if asset else "unknown",
-                        "quantity": float(holding.quantity),
-                        "average_cost": float(holding.average_cost),
-                        "total_cost": float(holding.total_cost),
+                        "quantity": str(holding.quantity),
+                        "average_cost": str(holding.average_cost),
+                        "total_cost": str(holding.total_cost),
                         "current_price": (
-                            float(holding.current_price)
-                            if holding.current_price
-                            else 0
+                            str(holding.current_price)
+                            if holding.current_price is not None
+                            else None
                         ),
                         "current_value": (
-                            float(holding.current_value)
-                            if holding.current_value
-                            else 0
+                            str(holding.current_value)
+                            if holding.current_value is not None
+                            else None
                         ),
                         "gain_loss": (
-                            float(holding.current_value - holding.total_cost)
-                            if holding.current_value is not None
-                            else 0
+                            str(holding.gain_loss)
+                            if holding.gain_loss is not None else None
                         ),
                         "gain_loss_percent": (
-                            float(
-                                (holding.current_value - holding.total_cost)
-                                / holding.total_cost
-                                * 100
-                            )
-                            if holding.current_value is not None
-                            and holding.total_cost
-                            else 0
+                            str(holding.gain_loss_percent)
+                            if holding.gain_loss_percent is not None else None
                         ),
                         "broker": (
                             holding.broker.value if holding.broker else "unknown"
                         ),
                         "price_source": latest_price.source if latest_price else None,
                         "price_currency": (
-                            latest_price.currency if latest_price else None
+                            holding.price_currency if latest_price else None
                         ),
                         "price_date": (
                             latest_price.price_date.isoformat()
                             if latest_price
                             else None
                         ),
+                        "price_freshness": holding.price_freshness,
                     }
                 )
 
-            valued_holdings = [
+            priced_values = [
                 holding
                 for holding in holding_data
-                if holding["current_value"] > 0
+                if holding["current_value"] is not None
+                and holding["price_currency"] is not None
+                and Decimal(holding["current_value"]) > 0
             ]
+            valuation_currencies = {
+                holding["price_currency"] for holding in priced_values
+            }
+            valued_holdings = (
+                priced_values if len(valuation_currencies) <= 1 else []
+            )
             total_valued = sum(
                 (Decimal(str(holding["current_value"])) for holding in valued_holdings),
                 Decimal("0"),
             )
             largest_holding = max(
                 valued_holdings,
-                key=lambda holding: holding["current_value"],
+                key=lambda holding: Decimal(str(holding["current_value"])),
                 default=None,
             )
             largest_weight = (
@@ -130,12 +132,20 @@ class PortfolioAgent(BaseAgent):
             price_sources = sorted(
                 {
                     holding["price_source"] or "unknown"
-                    for holding in valued_holdings
+                    for holding in holding_data
+                    if holding["current_value"] is not None
                 }
             )
             assessment_evidence = [
-                f"{len(holding_data)} stored holdings; stored total value "
-                f"{summary.total_value or 0}."
+                (
+                    f"{len(holding_data)} stored holdings; total value "
+                    f"{summary.total_value} {summary.currency}."
+                    if summary.total_value is not None
+                    else (
+                        f"{len(holding_data)} stored holdings; no combined total "
+                        "is available because currencies are mixed."
+                    )
+                )
             ]
             if largest_holding and largest_weight is not None:
                 assessment_evidence.append(
@@ -155,6 +165,16 @@ class PortfolioAgent(BaseAgent):
                 assessment_missing.append(
                     "A virtual_broker price is sample data, not a live market quote."
                 )
+            if summary.valuation_status == "partial":
+                assessment_missing.append(
+                    "Some holdings have no usable stored price, so the portfolio "
+                    "gain/loss is unavailable and total value is partial."
+                )
+            elif summary.valuation_status == "mixed_currency":
+                assessment_missing.append(
+                    "Holdings or prices use different currencies; no combined "
+                    "portfolio value or gain/loss is calculated."
+                )
             assessment_finding = (
                 f"The stored portfolio contains {len(holding_data)} holdings."
                 if holding_data
@@ -169,19 +189,38 @@ class PortfolioAgent(BaseAgent):
             # Format data
             data = {
                 "portfolio_summary": {
-                    "total_value": float(summary.total_value) if summary.total_value else 0,
-                    "total_cost": float(summary.total_cost) if summary.total_cost else 0,
-                    "total_gain_loss": float(summary.total_gain_loss) if summary.total_gain_loss else 0,
-                    "total_gain_loss_percent": float(summary.total_gain_loss_percent) if summary.total_gain_loss_percent else 0,
-                    "cash_value": float(summary.cash_value) if summary.cash_value else 0,
+                    "total_value": (
+                        str(summary.total_value)
+                        if summary.total_value is not None
+                        else None
+                    ),
+                    "total_cost": (
+                        str(summary.total_cost)
+                        if summary.total_cost is not None
+                        else None
+                    ),
+                    "total_gain_loss": (
+                        str(summary.total_gain_loss)
+                        if summary.total_gain_loss is not None
+                        else None
+                    ),
+                    "total_gain_loss_percent": (
+                        str(summary.total_gain_loss_percent)
+                        if summary.total_gain_loss_percent is not None
+                        else None
+                    ),
+                    "cash_value": str(summary.cash_value),
+                    "currency": summary.currency,
+                    "valuation_status": summary.valuation_status,
+                    "unpriced_holdings": summary.unpriced_holdings,
                 },
                 "holdings": holding_data,
                 "recent_transactions": [
                     {
                         "symbol": t.asset.symbol if t.asset else "unknown",
                         "type": t.transaction_type.value if t.transaction_type else "unknown",
-                        "quantity": float(t.quantity),
-                        "price": float(t.price),
+                        "quantity": str(t.quantity),
+                        "price": str(t.price),
                         "date": t.transaction_date.isoformat() if t.transaction_date else None,
                         "broker": t.broker.value if t.broker else "unknown",
                     }

@@ -72,6 +72,23 @@ publisher description; it does not fetch full article text. Macro and company
 fundamentals are based on the latest data stored from FRED and SEC filings,
 respectively, and can lag current conditions.
 
+Check the source and observation freshness currently stored by the app:
+
+```bash
+curl http://localhost:8000/api/portfolio/data-status
+```
+
+Portfolio summary amounts are combined only when holdings and their latest
+prices use one matching currency. Mixed-currency totals and gains are reported
+as unavailable rather than added together without conversion. A partial
+valuation lists holdings without a usable stored price. Chat analysis is
+read-only and reports source dates, currencies, and missing data when available.
+The LangGraph assistant workflow asks the configured LLM to select relevant
+specialists before they run. Simple portfolio lookups are answered directly from
+stored portfolio data without an extra synthesis call; questions needing multiple
+specialists are synthesized together. Routing uses one short model request.
+The assistant is read-only and does not execute trades.
+
 ### Ask About a Company Outside Your Portfolio
 
 The market-research agent recognizes explicit company names such as NVIDIA or

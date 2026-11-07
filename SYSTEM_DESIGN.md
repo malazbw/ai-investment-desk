@@ -206,9 +206,9 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 - [ ] Full end-to-end testing
 - [ ] Deploy MVP
 
-### Phase 2: Enhanced Analysis (Weeks 5-8)
+### Phase 2: Market Intelligence and Specialist Analysis (Weeks 5-8)
 
-**Goal:** More sophisticated agents for deeper analysis
+**Goal:** Keep price, news, fundamentals, and macro data useful for specialist analysis.
 
 #### Week 5: Market Research Agent
 - [x] Read stored portfolio news
@@ -236,14 +236,16 @@ AI Investment Desk is a multi-agent AI platform that consolidates user portfolio
 - [ ] Scenario analysis
 - [ ] Market regime detection
 
-### Phase 3: Real Broker Integrations (Weeks 9-12)
+### Phase 3: AI Assistant (Can Start Before Phase 2 Is Complete)
 
-**Goal:** Production-ready multi-broker support
+**Goal:** Answer user questions through an evidence-grounded, read-only assistant.
 
-- [ ] Scalable Capital OAuth
-- [ ] Binance secure key management
-- [ ] Holdings reconciliation
-- [ ] Multi-broker portfolio view
+- [x] Route questions to relevant specialists
+- [x] Coordinate specialists with a LangGraph workflow
+- [x] Answer simple portfolio lookups directly without unnecessary synthesis
+- [x] Synthesize results when multiple specialists are relevant
+- [ ] Add scenario tests for company research, comparisons, and portfolio impact
+- [ ] Persist conversation context with explicit user-controlled retention
 
 ### Phase 4: Autonomous Trading (Future)
 

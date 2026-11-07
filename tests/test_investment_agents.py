@@ -18,8 +18,9 @@ from app.agents import (
     ValuationAgent,
     execute_agents_parallel,
 )
+from app.agents.assistant_workflow import AssistantWorkflow
 from app.agents.tools import CompanyResearchTool, extract_company_symbols
-from app.agents.base import BaseAgent
+from app.agents.base import AgentOutput, BaseAgent
 from app.agents.portfolio_agent import PortfolioAgent
 from app.chat_schemas import ChatMessage
 from app.llm.client import LLMClient
@@ -40,8 +41,9 @@ from app.services import NewsService
 
 
 class StubProvider:
-    def __init__(self):
+    def __init__(self, route_response='["portfolio"]'):
         self.calls = []
+        self.route_response = route_response
 
     async def analyze(self, user_message, system_prompt, context):
         self.calls.append(
@@ -51,6 +53,8 @@ class StubProvider:
                 "context": context,
             }
         )
+        if "Select only the specialists needed" in system_prompt:
+            return self.route_response
         return "Combined assessment."
 
 
@@ -168,7 +172,8 @@ def seed_portfolio(db):
     return asset
 
 
-def test_router_selects_every_specialist_for_decision_questions():
+@pytest.mark.asyncio
+async def test_router_selects_only_the_specialists_returned_by_intent_classifier():
     agents = {
         "portfolio": PortfolioAgent(),
         "market_research": MarketResearchAgent(),
@@ -176,19 +181,18 @@ def test_router_selects_every_specialist_for_decision_questions():
         "risk": RiskManagerAgent(),
         "valuation": ValuationAgent(),
     }
+    provider = StubProvider(route_response='["portfolio", "risk"]')
 
-    selected = AgentRouter(agents).decide_agents("Should I buy Apple?")
+    selected = await AgentRouter(agents).decide_agents(
+        "Should I buy Apple?", LLMClient(provider)
+    )
 
-    assert [agent.name for agent in selected] == [
-        "portfolio",
-        "market_research",
-        "macro",
-        "risk",
-        "valuation",
-    ]
+    assert [agent.name for agent in selected] == ["portfolio", "risk"]
+    assert "Select only the specialists needed" in provider.calls[0]["system_prompt"]
 
 
-def test_router_selects_relevant_agents_for_specific_question():
+@pytest.mark.asyncio
+async def test_router_accepts_portfolio_only_classification_for_holdings_question():
     agents = {
         "portfolio": PortfolioAgent(),
         "market_research": MarketResearchAgent(),
@@ -196,13 +200,17 @@ def test_router_selects_relevant_agents_for_specific_question():
         "risk": RiskManagerAgent(),
         "valuation": ValuationAgent(),
     }
+    provider = StubProvider(route_response='["portfolio"]')
 
-    selected = AgentRouter(agents).decide_agents("What is the P/E and valuation?")
+    selected = await AgentRouter(agents).decide_agents(
+        "Which holdings do I have?", LLMClient(provider)
+    )
 
-    assert [agent.name for agent in selected] == ["portfolio", "valuation"]
+    assert [agent.name for agent in selected] == ["portfolio"]
 
 
-def test_router_selects_market_research_for_unheld_company():
+@pytest.mark.asyncio
+async def test_router_rejects_unknown_specialists_from_classifier():
     agents = {
         "portfolio": PortfolioAgent(),
         "market_research": MarketResearchAgent(),
@@ -210,15 +218,49 @@ def test_router_selects_market_research_for_unheld_company():
         "risk": RiskManagerAgent(),
         "valuation": ValuationAgent(),
     }
+    provider = StubProvider(route_response='["portfolio", "unknown"]')
 
-    selected = AgentRouter(agents).decide_agents("What is NVIDIA's P/E ratio?")
+    with pytest.raises(ValueError, match="invalid specialist names"):
+        await AgentRouter(agents).decide_agents(
+            "What is the P/E and valuation?", LLMClient(provider)
+        )
 
-    assert [agent.name for agent in selected] == [
-        "portfolio",
-        "market_research",
-        "valuation",
-    ]
     assert extract_company_symbols("Should I invest in NVIDIA?") == ["NVDA"]
+
+
+def test_direct_portfolio_answer_labels_partial_valuation_and_price_provenance():
+    response = AssistantWorkflow._answer_portfolio_lookup(
+        {
+            "agent_outputs": [
+                AgentOutput(
+                    agent_name="portfolio",
+                    success=True,
+                    data={
+                        "portfolio_summary": {
+                            "total_value": "120",
+                            "currency": "USD",
+                            "valuation_status": "partial",
+                            "unpriced_holdings": ["MSFT"],
+                        },
+                        "holdings": [
+                            {
+                                "symbol": "AAPL",
+                                "quantity": "1.00000000",
+                                "price_source": "virtual_broker",
+                                "price_date": "2026-11-04T12:00:00",
+                            },
+                            {"symbol": "MSFT", "quantity": "2"},
+                        ],
+                    },
+                )
+            ]
+        }
+    )["response"]
+
+    assert "Partial stored value: USD 120.00." in response
+    assert "No usable stored price for: MSFT." in response
+    assert "Virtual broker prices are sample data, not live quotes" in response
+    assert "observed 2026-11-04" in response
 
 
 @pytest.mark.asyncio
@@ -459,7 +501,7 @@ def test_virtual_broker_prices_are_valued_by_risk_agent():
         assert risk.success
         assert risk.data["status"] == "available"
         assert risk.data["unpriced_symbols"] == []
-        assert Decimal(risk.data["total_valued_usd"]) == Decimal("3506.25")
+        assert Decimal(risk.data["total_valued_usd"]) == Decimal("12021.25")
         assert {
             position["price_source"]
             for position in risk.data["largest_positions"]
@@ -472,8 +514,9 @@ def test_virtual_broker_prices_are_valued_by_risk_agent():
             position["symbol"]: Decimal(position["weight_percent"])
             for position in risk.data["largest_positions"]
         } == {
-            "AAPL": Decimal("1755") / Decimal("3506.25") * Decimal("100"),
-            "MSFT": Decimal("1751.25") / Decimal("3506.25") * Decimal("100"),
+            "AAPL": Decimal("1755") / Decimal("12021.25") * Decimal("100"),
+            "MSFT": Decimal("1751.25") / Decimal("12021.25") * Decimal("100"),
+            "VOO": Decimal("8515") / Decimal("12021.25") * Decimal("100"),
         }
     finally:
         db.close()
@@ -482,7 +525,11 @@ def test_virtual_broker_prices_are_valued_by_risk_agent():
 
 @pytest.mark.asyncio
 async def test_synthesis_agent_sends_specialist_results_to_llm():
-    provider = StubProvider()
+    provider = StubProvider(
+        route_response=(
+            '["portfolio", "market_research", "macro", "risk", "valuation"]'
+        )
+    )
     client = LLMClient(provider)
     output = await SynthesisAgent().execute(
         AgentContext(
@@ -502,9 +549,10 @@ async def test_synthesis_agent_sends_specialist_results_to_llm():
     assert output.data["specialists_considered"] == ["portfolio"]
     assert provider.calls[0]["context"]["portfolio"]["holdings_count"] == 1
     assert "untrusted evidence" in provider.calls[0]["system_prompt"]
-    assert "finding, evidence, meaning" in provider.calls[0]["system_prompt"]
-    assert "distinct labeled entry" in provider.calls[0]["system_prompt"]
-    assert "distinguish available historical growth from missing forward estimates" in (
+    assert "under 100 words" in provider.calls[0]["system_prompt"]
+    assert "at most three short bullets" in provider.calls[0]["system_prompt"]
+    assert "Combine overlapping specialist findings" in provider.calls[0]["system_prompt"]
+    assert "Distinguish available historical growth from missing forward estimates" in (
         provider.calls[0]["system_prompt"]
     )
 
@@ -561,7 +609,11 @@ def test_chat_endpoint_runs_specialists_then_synthesis(monkeypatch):
     db = session_factory()
     try:
         seed_portfolio(db)
-        provider = StubProvider()
+        provider = StubProvider(
+            route_response=(
+                '["portfolio", "market_research", "macro", "risk", "valuation"]'
+            )
+        )
         monkeypatch.setattr(routes, "llm_client", LLMClient(provider))
         monkeypatch.setattr(routes, "get_session_factory", lambda: session_factory)
 
@@ -598,15 +650,18 @@ def test_chat_endpoint_runs_specialists_then_synthesis(monkeypatch):
             }
         assert response.analysis["macro"]["status"] == "no_data"
         assert response.analysis["portfolio"]["holdings"][0]["price_source"] == "etoro"
-        assert set(provider.calls[0]["context"]) >= {
+        assert len(provider.calls) == 2
+        assert "Select only the specialists needed" in provider.calls[0]["system_prompt"]
+        synthesis_call = provider.calls[1]
+        assert set(synthesis_call["context"]) >= {
             "portfolio",
             "market_research",
             "macro",
             "risk",
             "valuation",
         }
-        assert "price_source" in provider.calls[0]["context"]["portfolio"]["holdings"][0]
-        assert provider.calls[0]["context"]["macro"]["status"] == "no_data"
+        assert "price_source" in synthesis_call["context"]["portfolio"]["holdings"][0]
+        assert synthesis_call["context"]["macro"]["status"] == "no_data"
     finally:
         db.close()
         engine.dispose()

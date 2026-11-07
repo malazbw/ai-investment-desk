@@ -13,7 +13,15 @@ from app.data_sources.sec import (
     extract_annual_fact_history,
     extract_company_facts,
 )
-from app.models import Asset, AssetType, Base, BrokerType, Holding, Price
+from app.models import (
+    Asset,
+    AssetType,
+    Base,
+    BrokerType,
+    CompanyFinancialFact,
+    Holding,
+    Price,
+)
 from app.services import SECFundamentalsService
 
 
@@ -235,11 +243,12 @@ async def test_sec_sync_stores_facts_and_valuation_agent_calculates_metrics():
                 )
             return httpx.Response(200, json=company_facts_payload())
 
-        result = await SECFundamentalsService(
+        service = SECFundamentalsService(
             db,
             "AI Investment Desk contact: test@example.com",
             transport=httpx.MockTransport(handler),
-        ).sync_portfolio_facts()
+        )
+        result = await service.sync_portfolio_facts()
 
         assert result == {
             "status": "success",
@@ -251,6 +260,10 @@ async def test_sec_sync_stores_facts_and_valuation_agent_calculates_metrics():
         assert requests[0].headers["user-agent"] == (
             "AI Investment Desk contact: test@example.com"
         )
+        repeated_result = await service.sync_portfolio_facts()
+        assert repeated_result["facts_stored"] == 0
+        assert repeated_result["facts_updated"] == 0
+        assert db.query(CompanyFinancialFact).count() == 8
 
         output = await ValuationAgent().execute(
             AgentContext(user_message="Value AAPL", metadata={"db": db})

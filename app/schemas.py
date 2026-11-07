@@ -1,7 +1,7 @@
 """
 Pydantic schemas for API requests/responses
 """
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List
@@ -40,6 +40,10 @@ class HoldingResponse(BaseModel):
     current_value: Optional[Decimal]
     gain_loss: Optional[Decimal] = None
     gain_loss_percent: Optional[float] = None
+    price_source: Optional[str] = None
+    price_currency: Optional[str] = None
+    price_date: Optional[datetime] = None
+    price_freshness: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     asset: Optional[AssetResponse] = None
@@ -98,13 +102,16 @@ class PriceResponse(BaseModel):
 
 
 class PortfolioSummary(BaseModel):
-    total_value: Decimal
-    total_cost: Decimal
-    total_gain_loss: Decimal
-    total_gain_loss_percent: float
+    total_value: Optional[Decimal]
+    total_cost: Optional[Decimal]
+    total_gain_loss: Optional[Decimal]
+    total_gain_loss_percent: Optional[float]
     cash_value: Decimal
     holdings_count: int
     assets_count: int
+    currency: Optional[str] = None
+    valuation_status: str = "complete"
+    unpriced_holdings: List[str] = Field(default_factory=list)
 
 
 class PortfolioSnapshot(BaseModel):

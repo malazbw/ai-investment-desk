@@ -10,22 +10,38 @@ import asyncio
 import uuid
 import logging
 
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models import BrokerType, AssetType, TransactionType
 from app.schemas import (
     HoldingResponse, PortfolioSummary, TransactionResponse,
     TransactionCreate, BrokerPortfolio
 )
 from app.chat_schemas import ChatMessage, ChatResponse
-from app.services import PortfolioService, MacroDataService
-from app.services import ExchangeRateService, NewsService
+from app.services import (
+    EtoroPriceService,
+    MacroDataService,
+    PortfolioService,
+    SECFundamentalsService,
+    ExchangeRateService,
+    NewsService,
+)
 from app.brokers import VirtualBroker
+from app.brokers.etoro import EtoroMarketDataClient
 from app.config import settings
-from app.agents import BaseAgent, AgentRouter, AgentContext, execute_agents_parallel
+from app.agents import (
+    AgentRouter,
+    MacroContextAgent,
+    MarketResearchAgent,
+    RiskManagerAgent,
+)
+from app.agents.assistant_workflow import (
+    AssistantWorkflow,
+    AssistantWorkflowError,
+    UnknownAgentError,
+)
 from app.agents.portfolio_agent import PortfolioAgent
 from app.agents.valuation_agent import ValuationAgent
 from app.llm.client import LLMClient
-from app.llm.prompts import SystemPrompts
 from app.llm.context_builder import ContextBuilder
 from app.llm.providers import LLMFactory
 
@@ -34,7 +50,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 macro_router = APIRouter(prefix="/api/macro", tags=["macro"])
 exchange_rates_router = APIRouter(prefix="/api/exchange-rates", tags=["exchange-rates"])
+fundamentals_router = APIRouter(prefix="/api/fundamentals", tags=["fundamentals"])
 news_router = APIRouter(prefix="/api/news", tags=["news"])
+prices_router = APIRouter(prefix="/api/prices", tags=["prices"])
 chat_router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Initialize brokers
@@ -43,9 +61,13 @@ virtual_broker = VirtualBroker()
 # Initialize agents and router
 agents = {
     "portfolio": PortfolioAgent(),
+    "market_research": MarketResearchAgent(),
+    "macro": MacroContextAgent(),
+    "risk": RiskManagerAgent(),
     "valuation": ValuationAgent(),
 }
 agent_router = AgentRouter(agents)
+assistant_workflow = AssistantWorkflow(agent_router)
 
 # Initialize LLM client based on config
 llm_client = None
@@ -96,6 +118,11 @@ def get_portfolio_summary(db: Session = Depends(get_db)):
     """Get overall portfolio summary"""
     return PortfolioService.get_portfolio_summary(db)
 
+@router.get("/data-status")
+def get_portfolio_data_status(db: Session = Depends(get_db)):
+    """Report which data sources have stored records and how recent they are."""
+    return PortfolioService.get_data_status(db)
+
 
 @router.get("/holdings", response_model=List[HoldingResponse])
 def get_all_holdings(db: Session = Depends(get_db)):
@@ -115,7 +142,7 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
     Load portfolio from virtual broker (for testing).
     This will populate the database with sample holdings and transactions.
     """
-    from app.models import Asset
+    from app.models import Asset, Holding, Transaction
 
     try:
         # Get holdings from virtual broker
@@ -129,9 +156,11 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
                 symbol=holding.symbol,
                 name=holding.symbol,
                 asset_type=AssetType.STOCK,
+                currency=holding.currency,
             )
 
         # Load transactions
+        transactions_loaded = 0
         for txn in transactions:
             asset = db.query(Asset).filter(Asset.symbol == txn.symbol).first()
             if not asset:
@@ -140,8 +169,12 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
                     symbol=txn.symbol,
                     name=txn.symbol,
                     asset_type=AssetType.STOCK,
+                    currency="USD",
                 )
 
+            before = db.query(Transaction).filter(
+                Transaction.broker_transaction_id == txn.broker_id
+            ).first()
             PortfolioService.add_transaction(
                 db,
                 asset_id=asset.id,
@@ -153,6 +186,29 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
                 transaction_date=txn.timestamp,
                 broker_transaction_id=txn.broker_id
             )
+            transactions_loaded += int(before is None)
+
+        for broker_holding in holdings:
+            asset = db.query(Asset).filter(
+                Asset.symbol == broker_holding.symbol
+            ).one()
+            holding = db.query(Holding).filter(
+                Holding.asset_id == asset.id,
+                Holding.broker == BrokerType.SCALABLE_CAPITAL,
+            ).first()
+            if holding is None:
+                holding = Holding(
+                    asset_id=asset.id,
+                    broker=BrokerType.SCALABLE_CAPITAL,
+                    quantity=broker_holding.quantity,
+                    average_cost=broker_holding.average_cost,
+                    total_cost=broker_holding.quantity * broker_holding.average_cost,
+                )
+                db.add(holding)
+            else:
+                holding.quantity = broker_holding.quantity
+                holding.average_cost = broker_holding.average_cost
+                holding.total_cost = broker_holding.quantity * broker_holding.average_cost
 
         # Update prices
         prices_dict = {
@@ -164,9 +220,10 @@ async def sync_virtual_broker(db: Session = Depends(get_db)):
         return {
             "status": "synced",
             "holdings_loaded": len(holdings),
-            "transactions_loaded": len(transactions)
+            "transactions_loaded": transactions_loaded,
         }
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
@@ -182,24 +239,30 @@ def get_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(get_
 @router.post("/transactions", response_model=TransactionResponse)
 def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
     """Manually add a transaction"""
-    txn = PortfolioService.add_transaction(
-        db,
-        asset_id=transaction.asset_id,
-        broker=transaction.broker,
-        transaction_type=transaction.transaction_type,
-        quantity=transaction.quantity,
-        price=transaction.price,
-        total_amount=transaction.total_amount,
-        commission=transaction.commission,
-        transaction_date=transaction.transaction_date
-    )
+    try:
+        txn = PortfolioService.add_transaction(
+            db,
+            asset_id=transaction.asset_id,
+            broker=transaction.broker,
+            transaction_type=transaction.transaction_type,
+            quantity=transaction.quantity,
+            price=transaction.price,
+            total_amount=transaction.total_amount,
+            commission=transaction.commission,
+            transaction_date=transaction.transaction_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return txn
 
 
 @router.post("/snapshot")
 def create_portfolio_snapshot(db: Session = Depends(get_db)):
     """Create a portfolio snapshot"""
-    snapshot = PortfolioService.create_snapshot(db)
+    try:
+        snapshot = PortfolioService.create_snapshot(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "snapshot_id": snapshot.id,
         "snapshot_date": snapshot.snapshot_date,
@@ -252,9 +315,12 @@ def run_daily_macro_job(start_date: date | None = None, db: Session = Depends(ge
     if not settings.fred_api_key:
         raise HTTPException(status_code=400, detail="FRED_API_KEY not configured")
     service = MacroDataService(db, settings.fred_api_key)
-    return service.fetch_and_store_daily_macro(
+    result = service.fetch_and_store_daily_macro(
         start_date.isoformat() if start_date else None
     )
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["message"])
+    return result
 
 
 @macro_router.post("/jobs/monthly")
@@ -263,9 +329,12 @@ def run_monthly_macro_job(start_date: date | None = None, db: Session = Depends(
     if not settings.fred_api_key:
         raise HTTPException(status_code=400, detail="FRED_API_KEY not configured")
     service = MacroDataService(db, settings.fred_api_key)
-    return service.fetch_and_store_monthly_macro(
+    result = service.fetch_and_store_monthly_macro(
         start_date.isoformat() if start_date else None
     )
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["message"])
+    return result
 
 
 @exchange_rates_router.get("/latest")
@@ -295,6 +364,57 @@ def sync_exchange_rates(start_date: date | None = None, db: Session = Depends(ge
     )
     if result["status"] == "error":
         raise HTTPException(status_code=502, detail=result["message"])
+    return result
+
+
+# Fundamentals endpoints
+@fundamentals_router.post("/sync/sec")
+async def sync_sec_fundamentals(
+    user_agent: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Sync the portfolio's held stock/ETF fundamentals from SEC EDGAR."""
+    configured_user_agent = user_agent or settings.sec_user_agent
+    if not configured_user_agent or "@" not in configured_user_agent:
+        raise HTTPException(
+            status_code=400,
+            detail="SEC_USER_AGENT must include a contact email",
+        )
+    service = SECFundamentalsService(
+        db,
+        configured_user_agent,
+    )
+    result = await service.sync_portfolio_facts()
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["errors"] or "SEC sync failed")
+    return result
+
+
+# Price sync endpoints
+@prices_router.get("/latest")
+def get_latest_prices(db: Session = Depends(get_db)) -> List[Dict]:
+    """Return the latest stored market prices for each tracked asset."""
+    return EtoroPriceService.get_latest_portfolio_prices(db)
+
+
+@prices_router.post("/sync/etoro")
+async def sync_etoro_prices(db: Session = Depends(get_db)):
+    """Sync portfolio prices using eToro's public market-data API."""
+    if not settings.etoro_api_key or not settings.etoro_user_key:
+        raise HTTPException(
+            status_code=400,
+            detail="ETORO_API_KEY and ETORO_USER_KEY must be configured",
+        )
+    service = EtoroPriceService(
+        db,
+        client=EtoroMarketDataClient(
+            api_key=settings.etoro_api_key,
+            user_key=settings.etoro_user_key,
+        ),
+    )
+    result = await service.sync_portfolio_prices()
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["errors"] or "eToro sync failed")
     return result
 
 
@@ -330,7 +450,7 @@ def get_latest_symbol_news(
 async def manually_fetch_portfolio_news(db: Session = Depends(get_db)) -> Dict:
     """Manually trigger news fetch for all portfolio stocks"""
     result = await NewsService.fetch_and_store_portfolio_news(db, days=7)
-    if result["status"] != "success":
+    if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result.get("message", "Failed to fetch news"))
     return result
 
@@ -350,7 +470,7 @@ def analyze_symbol_news(symbol: str, limit: int = 10, db: Session = Depends(get_
 
 # Chat endpoint - all agents + LLM synthesis
 @chat_router.post("/message", response_model=ChatResponse)
-async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
+async def chat_message(chat_msg: ChatMessage):
     """
     Main chat endpoint for portfolio analysis.
 
@@ -371,81 +491,55 @@ async def chat_message(chat_msg: ChatMessage, db: Session = Depends(get_db)):
         conversation_id = chat_msg.conversation_id or str(uuid.uuid4())
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"[CHAT] Processing message: {chat_msg.message[:100]}...")
+        logger.info("[CHAT] Processing message with %s characters", len(chat_msg.message))
         logger.info(f"[CHAT] Conversation ID: {conversation_id}")
-        logger.info(f"[CHAT] Full message: {chat_msg.message}")
 
-        # Decide which agents to run
-        agents_to_run = agent_router.decide_agents(chat_msg.message)
-        logger.info(f"[CHAT] Agent router selected: {[a.name for a in agents_to_run]}")
-
-        if chat_msg.include_agents:
-            # Override with specific agents
-            agents_to_run = [
-                agent_router.get_agent(name)
-                for name in chat_msg.include_agents
-                if agent_router.get_agent(name)
-            ]
-            logger.info(f"[CHAT] Agents overridden to: {[a.name for a in agents_to_run]}")
-
-        if not agents_to_run:
-            raise HTTPException(
-                status_code=400,
-                detail="No agents could handle this message"
+        try:
+            workflow_state = await assistant_workflow.ainvoke(
+                user_message=chat_msg.message,
+                llm_client=llm_client,
+                db_factory=get_session_factory(),
+                include_agents=chat_msg.include_agents,
             )
+        except UnknownAgentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            logger.error("Agent routing failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not determine which specialists should handle this question.",
+            ) from exc
+        except AssistantWorkflowError as exc:
+            logger.error("Assistant workflow could not answer: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            logger.error("Assistant workflow failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="The assistant workflow failed. Check server logs and retry.",
+            ) from exc
 
-        logger.info(f"[CHAT] Running {len(agents_to_run)} agents in parallel")
-
-        # Create context for agents
-        context = AgentContext(
-            user_message=chat_msg.message,
-            metadata={"db": db}
-        )
-
-        # Execute agents in parallel
-        logger.info(f"[CHAT] Executing agents...")
-        agent_outputs = await execute_agents_parallel(agents_to_run, context)
-        logger.info(f"[CHAT] Agents execution complete. Got {len(agent_outputs)} results")
-
-        for i, output in enumerate(agent_outputs):
-            logger.info(f"[CHAT] Agent {i+1}: {output.agent_name} - success={output.success}, keys={list(output.data.keys()) if output.success else 'error'}")
-            if not output.success:
-                logger.error(f"[CHAT] Agent error: {output.error}")
-
-        # Build context from agent outputs
+        agent_outputs = workflow_state["agent_outputs"]
+        response_text = workflow_state["response"]
         context_dict = ContextBuilder.build_context(agent_outputs)
-        context_text = ContextBuilder.format_for_prompt(context_dict)
-
-        logger.info(f"[CHAT] Context built. Keys: {list(context_dict.keys())}")
-        logger.info(f"[CHAT] Context text length: {len(context_text)} chars")
-
-        logger.info(f"[CHAT] Sending to LLM for analysis...")
-        logger.info(f"[CHAT] System prompt: {SystemPrompts.GENERAL_ANALYST[:100]}...")
-
-        # Send to LLM for analysis
-        response = await llm_client.analyze(
-            user_message=chat_msg.message,
-            system_prompt=SystemPrompts.GENERAL_ANALYST,
-            context=context_dict
-        )
-
-        logger.info(f"[CHAT] LLM response received ({len(response)} chars)")
-        logger.info(f"[CHAT] LLM response: {response[:200]}...")
-        logger.info(f"{'='*60}\n")
 
         # Return response
         return ChatResponse(
-            response=response,
+            response=response_text,
             conversation_id=conversation_id,
             analysis=context_dict,
             timestamp=datetime.utcnow(),
             agents_used=[a.agent_name for a in agent_outputs]
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Chat processing failed: {str(e)}"
-        )
-
+            detail="Chat processing failed. Check server logs and retry.",
+        ) from e
