@@ -6,6 +6,274 @@
     <title>AI Investment Desk</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #1e40af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --neutral-50: #f9fafb;
+            --neutral-100: #f3f4f6;
+            --neutral-200: #e5e7eb;
+            --neutral-300: #d1d5db;
+            --neutral-600: #4b5563;
+            --neutral-900: #111827;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--neutral-50) 0%, #f0f4ff 100%);
+            min-height: 100vh;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .metric-box {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(59, 130, 246, 0.02) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.1);
+            border-radius: 10px;
+            padding: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .metric-box:hover {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+
+        .positive {
+            color: var(--success);
+        }
+
+        .negative {
+            color: var(--danger);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-blue {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--primary);
+        }
+
+        .badge-green {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .chat-message {
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user-msg {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .bot-msg {
+            background: linear-gradient(135deg, var(--neutral-100) 0%, var(--neutral-50) 100%);
+            color: var(--neutral-900);
+            border-left: 4px solid var(--primary);
+        }
+
+        .agent-badge {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            color: #7c3aed;
+        }
+
+        .source-link {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .source-link:hover {
+            border-bottom-color: var(--primary);
+        }
+
+        .holdings-table {
+            overflow-x: auto;
+        }
+
+        .holdings-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .holdings-table thead {
+            background: linear-gradient(90deg, var(--neutral-50) 0%, var(--neutral-100) 100%);
+            border-bottom: 2px solid var(--neutral-200);
+        }
+
+        .holdings-table th {
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--neutral-600);
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .holdings-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--neutral-200);
+            font-size: 14px;
+        }
+
+        .holdings-table tbody tr:hover {
+            background: var(--neutral-50);
+        }
+
+        .ticker-cell {
+            font-weight: 600;
+            color: var(--neutral-900);
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--neutral-200);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            background: white;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .data-status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+
+        .status-item {
+            background: linear-gradient(135deg, var(--neutral-50) 0%, var(--neutral-100) 100%);
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+
+        .status-item:hover {
+            background: linear-gradient(135deg, var(--neutral-100) 0%, var(--neutral-50) 100%);
+            border-color: var(--primary);
+        }
+
+        .status-label {
+            font-size: 12px;
+            color: var(--neutral-600);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .status-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--neutral-900);
+        }
+
+        .status-fresh {
+            color: var(--success);
+        }
+
+        .status-stale {
+            color: var(--warning);
+        }
+
+        .findings-container {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(59, 130, 246, 0.02) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.15);
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 12px;
+        }
+
+        .finding-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .finding-item:last-child {
+            border-bottom: none;
+        }
+    </style>
 </head>
 <body class="bg-gray-50">
     <div id="root"></div>
@@ -81,126 +349,175 @@
                     ? `Some holdings have no usable price: ${(portfolioData.unpriced_holdings || []).map(escapeHtml).join(", ")}. Total gain/loss is unavailable.`
                     : "";
             const html = `
-                <div class="min-h-screen bg-gray-50">
+                <div style="min-height: 100vh;">
                     <!-- Header -->
-                    <header class="bg-white shadow">
-                        <div class="max-w-7xl mx-auto px-6 py-4">
-                            <h1 class="text-3xl font-bold text-gray-900">AI Investment Desk</h1>
+                    <header class="card" style="margin: 0; border-radius: 0; box-shadow: none; border-bottom: 2px solid var(--neutral-200);">
+                        <div style="max-width: 1600px; margin: 0 auto; padding: 24px 32px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <h1 class="gradient-text" style="font-size: 28px; font-weight: 700; margin: 0;">💼 AI Investment Desk</h1>
+                                    <p style="color: var(--neutral-600); margin: 4px 0 0 0; font-size: 14px;">Your AI-powered portfolio intelligence</p>
+                                </div>
+                                <div style="display: flex; gap: 12px; font-size: 24px;">
+                                    📊 🤖 ✨
+                                </div>
+                            </div>
                         </div>
                     </header>
 
                     <!-- Main Content -->
-                    <main class="max-w-7xl mx-auto px-6 py-8">
-                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                            <!-- Left Column: Portfolio + Chat -->
-                            <div class="lg:col-span-2">
-                                <!-- Portfolio Summary Cards -->
-                                <div class="grid grid-cols-2 gap-4 mb-8">
-                                    <div class="bg-white rounded-lg shadow p-6">
-                                        <p class="text-gray-600 text-sm">Total Value</p>
-                                        <p class="text-2xl font-bold text-gray-900">${formatCurrency(portfolioData.total_value, summaryCurrency)}</p>
-                                        <p class="text-xs text-gray-500 mt-1">${escapeHtml(summaryCurrency || "Currency unavailable")}</p>
-                                    </div>
-                                    <div class="bg-white rounded-lg shadow p-6">
-                                        <p class="text-gray-600 text-sm">Total Gain/Loss</p>
-                                        <p class="text-2xl font-bold ${portfolioData.total_gain_loss !== null && portfolioData.total_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                            ${portfolioData.total_gain_loss === null ? "Unavailable" : `${formatCurrency(portfolioData.total_gain_loss, summaryCurrency)} (${Number(portfolioData.total_gain_loss_percent).toFixed(2)}%)`}
-                                        </p>
-                                    </div>
-                                    <div class="bg-white rounded-lg shadow p-6">
-                                        <p class="text-gray-600 text-sm">Holdings</p>
-                                        <p class="text-2xl font-bold text-gray-900">${portfolioData.holdings_count}</p>
-                                    </div>
-                                    <div class="bg-white rounded-lg shadow p-6">
-                                        <p class="text-gray-600 text-sm">Assets</p>
-                                        <p class="text-2xl font-bold text-gray-900">${portfolioData.assets_count}</p>
-                                    </div>
+                    <main style="max-width: 1600px; margin: 0 auto; padding: 32px;">
+                        <div style="display: grid; grid-template-columns: 1fr 400px; gap: 24px; margin-bottom: 24px;">
+                            <!-- Portfolio Summary Cards -->
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                                <div class="metric-box">
+                                    <p style="color: var(--neutral-600); font-size: 12px; margin: 0 0 8px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Total Value</p>
+                                    <p style="font-size: 24px; font-weight: 700; color: var(--neutral-900); margin: 0;">${formatCurrency(portfolioData.total_value, summaryCurrency)}</p>
+                                    <p style="font-size: 11px; color: var(--neutral-600); margin: 4px 0 0 0;">${escapeHtml(summaryCurrency || "N/A")}</p>
                                 </div>
-                                ${summaryWarning ? `<p class="mb-6 rounded bg-amber-50 p-3 text-sm text-amber-900">${summaryWarning}</p>` : ""}
+                                <div class="metric-box">
+                                    <p style="color: var(--neutral-600); font-size: 12px; margin: 0 0 8px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Gain/Loss</p>
+                                    <p style="font-size: 24px; font-weight: 700; margin: 0;" class="${portfolioData.total_gain_loss !== null && portfolioData.total_gain_loss >= 0 ? 'positive' : 'negative'}">
+                                        ${portfolioData.total_gain_loss === null ? "N/A" : `${formatCurrency(portfolioData.total_gain_loss, summaryCurrency)}`}
+                                    </p>
+                                    <p style="font-size: 11px; color: var(--neutral-600); margin: 4px 0 0 0;">${portfolioData.total_gain_loss === null ? "" : `${Number(portfolioData.total_gain_loss_percent).toFixed(2)}%`}</p>
+                                </div>
+                                <div class="metric-box">
+                                    <p style="color: var(--neutral-600); font-size: 12px; margin: 0 0 8px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Holdings</p>
+                                    <p style="font-size: 24px; font-weight: 700; color: var(--neutral-900); margin: 0;">${portfolioData.holdings_count}</p>
+                                </div>
+                                <div class="metric-box">
+                                    <p style="color: var(--neutral-600); font-size: 12px; margin: 0 0 8px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Assets</p>
+                                    <p style="font-size: 24px; font-weight: 700; color: var(--neutral-900); margin: 0;">${portfolioData.assets_count}</p>
+                                </div>
+                            </div>
 
-                                <section class="bg-white rounded-lg shadow p-6 mb-8">
-                                    <h2 class="text-xl font-bold text-gray-900 mb-4">Data status</h2>
-                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-                                        ${Object.entries(dataStatus).map(([name, item]) => `
-                                            <div class="rounded border p-3">
-                                                <p class="text-sm font-semibold text-gray-800">${escapeHtml(name.replaceAll("_", " "))}</p>
-                                                <p class="text-sm ${item.status === "stale" || item.status === "not_synced" ? "text-amber-700" : "text-green-700"}">${freshnessLabel(item.status)}</p>
-                                                <p class="text-xs text-gray-500">${escapeHtml(item.source || "No source")}</p>
-                                                <p class="text-xs text-gray-500">${escapeHtml(item.observed_at || "No observation")}</p>
-                                            </div>
-                                        `).join("")}
+                            <!-- Quick Status -->
+                            <div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+                                <p style="font-weight: 600; margin: 0; color: var(--neutral-900);">Data Status</p>
+                                ${Object.entries(dataStatus).map(([name, item]) => `
+                                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--neutral-200);">
+                                        <span style="color: var(--neutral-600);">${escapeHtml(name.replaceAll("_", " "))}</span>
+                                        <span class="badge ${item.status === "fresh" ? "badge-green" : "badge-blue"}">${freshnessLabel(item.status)}</span>
                                     </div>
-                                </section>
+                                `).join("")}
+                            </div>
+                        </div>
 
-                                <!-- Holdings Table -->
-                                <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
-                                    <div class="px-6 py-4 border-b">
-                                        <h2 class="text-xl font-bold text-gray-900">Holdings</h2>
-                                    </div>
-                                    <div class="overflow-x-auto">
-                                        <table class="w-full">
-                                            <thead class="bg-gray-100">
-                                                <tr>
-                                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Symbol</th>
-                                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-700">Quantity</th>
-                                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-700">Price</th>
-                                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-700">Value</th>
-                                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-700">Gain/Loss</th>
-                                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-700">%</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody class="divide-y">
-                                                ${holdings.map(h => `
-                                                    <tr class="hover:bg-gray-50">
-                                                        <td class="px-6 py-4 font-semibold text-gray-900">${escapeHtml(h.asset?.symbol || 'N/A')}</td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">${Number(h.quantity).toLocaleString('en-US', { maximumFractionDigits: 8 })}</td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">
-                                                            ${h.current_price !== null ? formatCurrency(h.current_price, h.price_currency || h.asset?.currency) : 'N/A'}
-                                                            <span class="block text-xs text-gray-500">${escapeHtml(h.price_source || "No source")} · ${escapeHtml(h.price_date || "No date")} · ${freshnessLabel(h.price_freshness)}</span>
-                                                        </td>
-                                                        <td class="px-6 py-4 text-right text-gray-600">${h.current_value !== null ? formatCurrency(h.current_value, h.price_currency || h.asset?.currency) : 'N/A'}</td>
-                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss === null ? 'text-gray-500' : h.gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                                            ${h.gain_loss !== null ? formatCurrency(h.gain_loss, h.asset?.currency) : 'N/A'}
-                                                        </td>
-                                                        <td class="px-6 py-4 text-right font-semibold ${h.gain_loss_percent === null ? 'text-gray-500' : h.gain_loss_percent >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                                            ${h.gain_loss_percent !== null ? Number(h.gain_loss_percent).toFixed(2) : 'N/A'}%
-                                                        </td>
-                                                    </tr>
-                                                `).join('')}
-                                            </tbody>
-                                        </table>
+                        ${summaryWarning ? `<div class="card" style="padding: 14px 16px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.05) 0%, rgba(245, 158, 11, 0.02) 100%); border-left: 4px solid var(--warning); margin-bottom: 24px;">
+                            <p style="color: var(--warning); font-weight: 500; margin: 0; font-size: 13px;">⚠️ ${summaryWarning}</p>
+                        </div>` : ""}
+
+                        <!-- Holdings Table -->
+                        <div class="card" style="margin-bottom: 24px; overflow: hidden;">
+                            <div style="padding: 20px 24px; border-bottom: 2px solid var(--neutral-200);">
+                                <h2 style="font-size: 18px; font-weight: 700; color: var(--neutral-900); margin: 0; display: flex; align-items: center; gap: 8px;">
+                                    📈 Holdings
+                                </h2>
+                            </div>
+                            <div class="holdings-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Symbol</th>
+                                            <th style="text-align: right;">Quantity</th>
+                                            <th style="text-align: right;">Price</th>
+                                            <th style="text-align: right;">Value</th>
+                                            <th style="text-align: right;">Gain/Loss</th>
+                                            <th style="text-align: right;">Return</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${holdings.map(h => `
+                                            <tr>
+                                                <td class="ticker-cell">${escapeHtml(h.asset?.symbol || 'N/A')}</td>
+                                                <td style="text-align: right; color: var(--neutral-600);">${Number(h.quantity).toLocaleString('en-US', { maximumFractionDigits: 8 })}</td>
+                                                <td style="text-align: right;">
+                                                    <div style="font-weight: 500; color: var(--neutral-900);">${h.current_price !== null ? formatCurrency(h.current_price, h.price_currency || h.asset?.currency) : 'N/A'}</div>
+                                                    <div style="font-size: 11px; color: var(--neutral-600); margin-top: 2px;">${escapeHtml(h.price_source || "—")} · ${freshnessLabel(h.price_freshness)}</div>
+                                                </td>
+                                                <td style="text-align: right; font-weight: 600; color: var(--neutral-900);">${h.current_value !== null ? formatCurrency(h.current_value, h.price_currency || h.asset?.currency) : 'N/A'}</td>
+                                                <td style="text-align: right; font-weight: 600;" class="${h.gain_loss === null ? '' : h.gain_loss >= 0 ? 'positive' : 'negative'}">
+                                                    ${h.gain_loss !== null ? formatCurrency(h.gain_loss, h.asset?.currency) : 'N/A'}
+                                                </td>
+                                                <td style="text-align: right; font-weight: 600;" class="${h.gain_loss_percent === null ? '' : h.gain_loss_percent >= 0 ? 'positive' : 'negative'}">
+                                                    ${h.gain_loss_percent !== null ? Number(h.gain_loss_percent).toFixed(2) + '%' : 'N/A'}
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Main Content Grid -->
+                        <div style="display: grid; grid-template-columns: 1fr 380px; gap: 24px;">
+                            <!-- Chat Interface -->
+                            <div class="card" style="padding: 0; display: flex; flex-direction: column; height: 600px; overflow: hidden;">
+                                <div style="padding: 20px 24px; border-bottom: 2px solid var(--neutral-200);">
+                                    <h2 style="font-size: 18px; font-weight: 700; color: var(--neutral-900); margin: 0; display: flex; align-items: center; gap: 8px;">
+                                        🤖 Ask Agents
+                                    </h2>
+                                    <p style="font-size: 13px; color: var(--neutral-600); margin: 4px 0 0 0;">AI-powered analysis</p>
+                                </div>
+
+                                <!-- Chat Messages -->
+                                <div id="chatMessages" style="flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px;">
+                                    <div style="color: var(--neutral-400); font-size: 13px; text-align: center; margin: auto;">💬 Start asking questions...</div>
+                                </div>
+
+                                <!-- Chat Input -->
+                                <div style="padding: 16px 20px; border-top: 2px solid var(--neutral-200); background: var(--neutral-50);">
+                                    <div style="display: flex; gap: 8px;">
+                                        <input
+                                            type="text"
+                                            id="chatInput"
+                                            placeholder="What about my portfolio?"
+                                            class="input-field"
+                                            style="flex: 1;"
+                                        />
+                                        <button onclick="sendMessage()" class="btn btn-primary">
+                                            Send
+                                        </button>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Right Column: Chat Interface -->
-                            <div class="lg:col-span-1">
-                                <div class="bg-white rounded-lg shadow h-full flex flex-col">
-                                    <div class="px-6 py-4 border-b">
-                                        <h2 class="text-xl font-bold text-gray-900">Ask Agents</h2>
-                                        <p class="text-sm text-gray-600 mt-1">AI-powered portfolio research</p>
+                            <!-- Sidebar: Quick Info -->
+                            <div style="display: flex; flex-direction: column; gap: 16px;">
+                                <!-- Summary Card -->
+                                <div class="card" style="padding: 20px;">
+                                    <h3 style="font-size: 14px; font-weight: 700; color: var(--neutral-900); margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.5px;">📊 Summary</h3>
+                                    <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span style="color: var(--neutral-600);">Diversification</span>
+                                            <span class="badge badge-green">${portfolioData.holdings_count} Holdings</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span style="color: var(--neutral-600);">YTD Return</span>
+                                            <span class="${portfolioData.total_gain_loss_percent >= 0 ? 'positive' : 'negative'}" style="font-weight: 600;">
+                                                ${portfolioData.total_gain_loss_percent !== null ? Number(portfolioData.total_gain_loss_percent).toFixed(2) + '%' : 'N/A'}
+                                            </span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span style="color: var(--neutral-600);">Data Freshness</span>
+                                            <span class="badge badge-green">Fresh</span>
+                                        </div>
                                     </div>
+                                </div>
 
-                                    <!-- Chat Messages -->
-                                    <div id="chatMessages" class="flex-1 overflow-y-auto p-6 space-y-4" style="max-height: 500px;">
-                                        <div class="text-gray-500 text-sm">Chat history will appear here...</div>
-                                    </div>
-
-                                    <!-- Chat Input -->
-                                    <div class="p-6 border-t">
-                                        <div class="flex gap-2">
-                                            <input
-                                                type="text"
-                                                id="chatInput"
-                                                placeholder="Ask about your portfolio..."
-                                                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                            <button
-                                                onclick="sendMessage()"
-                                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
-                                            >
-                                                Send
-                                            </button>
+                                <!-- Tips -->
+                                <div class="card" style="padding: 16px; background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(59, 130, 246, 0.02) 100%); border: 1px solid rgba(59, 130, 246, 0.1);">
+                                    <h3 style="font-size: 12px; font-weight: 700; color: var(--neutral-900); margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px;">💡 Try Asking</h3>
+                                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
+                                        <div style="padding: 6px 8px; background: white; border-radius: 6px; color: var(--primary); cursor: pointer; transition: all 0.2s; border-left: 3px solid var(--primary);" onclick="document.getElementById('chatInput').value = 'What are the P/E ratios for my holdings?'; sendMessage();">
+                                            "What are the P/E ratios?"
+                                        </div>
+                                        <div style="padding: 6px 8px; background: white; border-radius: 6px; color: var(--primary); cursor: pointer; transition: all 0.2s; border-left: 3px solid var(--primary);" onclick="document.getElementById('chatInput').value = 'What are my biggest risks?'; sendMessage();">
+                                            "What are my biggest risks?"
+                                        </div>
+                                        <div style="padding: 6px 8px; background: white; border-radius: 6px; color: var(--primary); cursor: pointer; transition: all 0.2s; border-left: 3px solid var(--primary);" onclick="document.getElementById('chatInput').value = 'How is the market looking?'; sendMessage();">
+                                            "How is the market?"
                                         </div>
                                     </div>
                                 </div>
@@ -229,7 +546,8 @@
 
             // Add user message
             const userMsg = document.createElement("div");
-            userMsg.className = "bg-blue-100 p-3 rounded text-sm text-gray-900 ml-auto max-w-xs";
+            userMsg.className = "chat-message user-msg";
+            userMsg.style.cssText = "padding: 12px 16px; border-radius: 10px; margin-left: auto; max-width: 80%; word-wrap: break-word;";
             userMsg.textContent = message;
             messagesDiv.appendChild(userMsg);
 
@@ -240,8 +558,9 @@
             try {
                 // Show loading
                 const loadingMsg = document.createElement("div");
-                loadingMsg.className = "bg-gray-100 p-3 rounded text-sm text-gray-900 italic";
-                loadingMsg.textContent = "Analyzing the available portfolio data...";
+                loadingMsg.className = "chat-message";
+                loadingMsg.style.cssText = "padding: 12px 16px; border-radius: 10px; color: var(--neutral-600); font-size: 13px; font-style: italic;";
+                loadingMsg.innerHTML = "⏳ Analyzing portfolio data...";
                 messagesDiv.appendChild(loadingMsg);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
@@ -258,13 +577,15 @@
                 if (result.response) {
                     // Show agents used
                     const agentsMsg = document.createElement("div");
-                    agentsMsg.className = "bg-purple-100 p-2 rounded text-xs text-gray-700 mb-2 break-words";
-                    agentsMsg.innerHTML = `<strong>Agents:</strong> ${(result.agents_used || []).join(", ")}`;
+                    agentsMsg.className = "agent-badge";
+                    agentsMsg.style.cssText = "padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; word-wrap: break-word; margin-bottom: 8px;";
+                    agentsMsg.innerHTML = `🔧 ${(result.agents_used || []).join(" • ")}`;
                     messagesDiv.appendChild(agentsMsg);
 
                     // Show LLM response
                     const botMsg = document.createElement("div");
-                    botMsg.className = "bg-green-100 p-4 rounded text-base leading-relaxed text-gray-900 max-w-full whitespace-pre-wrap break-words";
+                    botMsg.className = "chat-message bot-msg";
+                    botMsg.style.cssText = "padding: 14px 16px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.6;";
                     botMsg.textContent = result.response;
                     messagesDiv.appendChild(botMsg);
 
@@ -303,35 +624,33 @@
                             // Group by confidence
                             const highConfidence = findingsGroups.filter(f => f.confidence === 'high');
                             const mediumConfidence = findingsGroups.filter(f => f.confidence === 'medium');
-                            const lowConfidence = findingsGroups.filter(f => f.confidence === 'low');
 
                             if (highConfidence.length > 0 || mediumConfidence.length > 0) {
                                 const findingsMsg = document.createElement("div");
-                                findingsMsg.className = "bg-blue-50 p-4 rounded text-sm text-gray-800 mt-3 max-w-full";
+                                findingsMsg.className = "findings-container";
 
-                                let html = '<strong>📋 Sources & Evidence:</strong><br>';
+                                let html = '<strong style="font-size: 13px; color: var(--neutral-900);">📋 Sources & Evidence</strong>';
 
                                 if (highConfidence.length > 0) {
-                                    html += '<div style="margin-top: 8px;"><strong style="color: #047857;">Primary Sources (High Confidence)</strong><br>';
+                                    html += '<div style="margin-top: 10px;"><strong style="color: var(--success); font-size: 12px;">🔐 Primary Sources</strong>';
                                     highConfidence.slice(0, 5).forEach(item => {
                                         const f = item.finding;
                                         const source = f.source;
-                                        const badge = f.evidence_level === 'primary' ? '🔐' : '📊';
                                         if (source.url) {
-                                            html += `${badge} <a href="${escapeHtml(source.url)}" target="_blank" style="color: #0369a1; text-decoration: underline;">${escapeHtml(f.claim)}</a> <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                            html += `<div class="finding-item"><a href="${escapeHtml(source.url)}" target="_blank" class="source-link">${escapeHtml(f.claim)}</a> <span style="color: var(--neutral-600); font-size: 0.9em;">(${escapeHtml(source.source_name)})</span></div>`;
                                         } else {
-                                            html += `${badge} ${escapeHtml(f.claim)} <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                            html += `<div class="finding-item">${escapeHtml(f.claim)} <span style="color: var(--neutral-600); font-size: 0.9em;">(${escapeHtml(source.source_name)})</span></div>`;
                                         }
                                     });
                                     html += '</div>';
                                 }
 
                                 if (mediumConfidence.length > 0) {
-                                    html += '<div style="margin-top: 8px;"><strong style="color: #b45309;">Secondary Sources</strong><br>';
+                                    html += '<div style="margin-top: 10px;"><strong style="color: var(--warning); font-size: 12px;">📰 Secondary Sources</strong>';
                                     mediumConfidence.slice(0, 3).forEach(item => {
                                         const f = item.finding;
                                         const source = f.source;
-                                        html += `📰 ${escapeHtml(f.claim)} <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                        html += `<div class="finding-item">${escapeHtml(f.claim)} <span style="color: var(--neutral-600); font-size: 0.9em;">(${escapeHtml(source.source_name)})</span></div>`;
                                     });
                                     html += '</div>';
                                 }
@@ -347,8 +666,9 @@
                     localStorage.setItem("conversationId", conversationId);
                 } else {
                     const errMsg = document.createElement("div");
-                    errMsg.className = "bg-red-100 p-3 rounded text-sm text-red-900";
-                    errMsg.textContent = "Error: No response from agents";
+                    errMsg.className = "chat-message";
+                    errMsg.style.cssText = "padding: 12px 16px; border-radius: 10px; background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%); border-left: 4px solid var(--danger); color: var(--danger); font-size: 13px;";
+                    errMsg.textContent = "❌ Error: No response from agents";
                     messagesDiv.appendChild(errMsg);
                 }
 
@@ -357,8 +677,9 @@
             } catch (error) {
                 console.error("Chat error:", error);
                 const errMsg = document.createElement("div");
-                errMsg.className = "bg-red-100 p-3 rounded text-sm text-red-900";
-                errMsg.textContent = "Error: " + (error.response?.data?.detail || error.message);
+                errMsg.className = "chat-message";
+                errMsg.style.cssText = "padding: 12px 16px; border-radius: 10px; background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%); border-left: 4px solid var(--danger); color: var(--danger); font-size: 13px;";
+                errMsg.textContent = "❌ Error: " + (error.response?.data?.detail || error.message);
                 messagesDiv.appendChild(errMsg);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
             }
