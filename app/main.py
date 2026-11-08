@@ -3,6 +3,8 @@ FastAPI application entry point
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 from app.config import settings
 from app.routes import (
     chat_router,
@@ -43,6 +45,11 @@ app.include_router(news_router)
 app.include_router(prices_router)
 app.include_router(chat_router)
 
+# Serve static frontend files
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -71,7 +78,8 @@ def root():
     return {
         "app": settings.app_name,
         "status": "running",
-        "version": "0.1.0"
+        "version": "0.1.0",
+        "frontend": "Visit http://localhost:8000/static/index.html"
     }
 
 
