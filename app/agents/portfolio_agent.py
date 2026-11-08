@@ -2,12 +2,14 @@
 Portfolio Agent - analyzes user's holdings and portfolio
 """
 import time
+from datetime import datetime
 from app.agents.base import BaseAgent, AgentContext, AgentOutput
 from app.agents.assessment import build_assessment
+from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
 from app.models import Price
 from app.services import PortfolioService
 from sqlalchemy.orm import Session
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 from decimal import Decimal
 
@@ -186,8 +188,89 @@ class PortfolioAgent(BaseAgent):
                     f"{largest_weight:.2f}% of valued holdings."
                 )
 
+            # Extract structured findings
+            findings: List[Finding] = []
+
+            # Finding 1: Portfolio summary
+            if summary.total_value is not None:
+                findings.append(Finding(
+                    claim=f"Total portfolio value: {summary.total_value} {summary.currency}",
+                    source=SourceRef(
+                        source_type=SourceType.PORTFOLIO_DATA,
+                        source_name="Portfolio Database",
+                        url=None,
+                        credibility_score=1.0,
+                        fetched_at=datetime.utcnow()
+                    ),
+                    evidence_level=EvidenceLevel.PRIMARY,
+                    confidence_score=1.0,
+                    timestamp=datetime.utcnow(),
+                    metadata={"status": summary.valuation_status}
+                ))
+
+                if summary.total_gain_loss is not None:
+                    findings.append(Finding(
+                        claim=f"Total gain/loss: {summary.total_gain_loss} ({summary.total_gain_loss_percent}%)",
+                        source=SourceRef(
+                            source_type=SourceType.PORTFOLIO_DATA,
+                            source_name="Portfolio Database",
+                            url=None,
+                            credibility_score=1.0,
+                            fetched_at=datetime.utcnow()
+                        ),
+                        evidence_level=EvidenceLevel.PRIMARY,
+                        confidence_score=1.0,
+                        timestamp=datetime.utcnow(),
+                        metadata={"calculation": "from stored transactions and current prices"}
+                    ))
+
+            # Finding 2: Each holding
+            for holding in holding_data:
+                if holding["current_value"] is not None and Decimal(holding["current_value"]) > 0:
+                    findings.append(Finding(
+                        claim=f"{holding['symbol']}: {holding['quantity']} units @ {holding['current_price']} = {holding['current_value']}",
+                        source=SourceRef(
+                            source_type=SourceType.PRICE_DATA,
+                            source_name=holding["price_source"] or "Unknown",
+                            url=None,
+                            credibility_score=1.0 if holding["price_source"] != "virtual_broker" else 0.3,
+                            fetched_at=datetime.fromisoformat(holding["price_date"]) if holding["price_date"] else datetime.utcnow()
+                        ),
+                        evidence_level=EvidenceLevel.PRIMARY if holding["price_source"] != "virtual_broker" else EvidenceLevel.SECONDARY,
+                        confidence_score=1.0 if holding["price_source"] != "virtual_broker" else 0.5,
+                        timestamp=datetime.utcnow(),
+                        metadata={
+                            "symbol": holding["symbol"],
+                            "quantity": holding["quantity"],
+                            "gain_loss": holding["gain_loss"],
+                            "gain_loss_percent": holding["gain_loss_percent"],
+                            "price_source": holding["price_source"],
+                            "price_date": holding["price_date"],
+                            "is_sample": holding["price_source"] == "virtual_broker"
+                        }
+                    ))
+
             # Format data
             data = {
+                "findings": [f.to_dict() for f in findings],  # NEW: Structured findings with sources
+                "assessment": build_assessment(
+                    finding=assessment_finding,
+                    evidence=assessment_evidence,
+                    meaning=(
+                        "This describes only the holdings and price records stored "
+                        "in this desk; it is not a complete personal financial picture."
+                    ),
+                    counterpoint=(
+                        "Concentration within these records may overstate or understate "
+                        "your overall exposure if other accounts or assets are missing."
+                    ),
+                    confidence=(
+                        "High for arithmetic on stored records; low for completeness "
+                        "or current market value when prices are sample or stale."
+                    ),
+                    missing=assessment_missing,
+                ),
+                # Keep legacy fields for backward compatibility
                 "portfolio_summary": {
                     "total_value": (
                         str(summary.total_value)
@@ -226,23 +309,6 @@ class PortfolioAgent(BaseAgent):
                     }
                     for t in transactions
                 ],
-                "assessment": build_assessment(
-                    finding=assessment_finding,
-                    evidence=assessment_evidence,
-                    meaning=(
-                        "This describes only the holdings and price records stored "
-                        "in this desk; it is not a complete personal financial picture."
-                    ),
-                    counterpoint=(
-                        "Concentration within these records may overstate or understate "
-                        "your overall exposure if other accounts or assets are missing."
-                    ),
-                    confidence=(
-                        "High for arithmetic on stored records; low for completeness "
-                        "or current market value when prices are sample or stale."
-                    ),
-                    missing=assessment_missing,
-                ),
             }
 
             execution_time = (time.time() - start_time) * 1000

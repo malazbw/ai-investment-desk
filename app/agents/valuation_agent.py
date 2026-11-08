@@ -1,11 +1,13 @@
 """Valuation agent exposing stored prices and fundamental-data coverage."""
 
 import time
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List
 
 from app.agents.base import AgentContext, AgentOutput, BaseAgent
 from app.agents.assessment import build_assessment
+from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel, build_sec_url
 from app.models import Asset, AssetType, CompanyFinancialFact, Holding, Price
 
 
@@ -161,6 +163,8 @@ class ValuationAgent(BaseAgent):
                 if item["pe_ratio"] is not None
             ]
             evidence = []
+            findings: List[Finding] = []
+
             for item in valuations:
                 if item["pe_ratio"] is not None:
                     eps = item["diluted_eps"]
@@ -172,6 +176,63 @@ class ValuationAgent(BaseAgent):
                         f"{eps['period_end']} (filed {eps['filed_date']}, "
                         f"{eps['source']})."
                     )
+
+                    # Extract findings for P/E and fundamentals
+                    findings.append(Finding(
+                        claim=f"{item['symbol']} P/E ratio: {Decimal(item['pe_ratio']):.2f}",
+                        source=SourceRef(
+                            source_type=SourceType.SEC_FILING,
+                            source_name=f"SEC {eps['form']}",
+                            url=None,  # Could build from accession number if available
+                            credibility_score=1.0,
+                            fetched_at=datetime.fromisoformat(eps['filed_date'])
+                        ),
+                        evidence_level=EvidenceLevel.PRIMARY,
+                        confidence_score=1.0,
+                        timestamp=datetime.utcnow(),
+                        metadata={
+                            "symbol": item["symbol"],
+                            "pe_ratio": item["pe_ratio"],
+                            "price": item["latest_price"],
+                            "price_source": item["price_source"],
+                            "eps": eps["value"],
+                            "eps_period_end": eps["period_end"],
+                            "form": eps["form"]
+                        }
+                    ))
+
+                    if item.get("net_profit_margin_percent"):
+                        findings.append(Finding(
+                            claim=f"{item['symbol']} net profit margin: {item['net_profit_margin_percent']}%",
+                            source=SourceRef(
+                                source_type=SourceType.SEC_FILING,
+                                source_name="SEC",
+                                url=None,
+                                credibility_score=1.0,
+                                fetched_at=datetime.utcnow()
+                            ),
+                            evidence_level=EvidenceLevel.DERIVED,
+                            confidence_score=0.95,
+                            timestamp=datetime.utcnow(),
+                            metadata={"symbol": item["symbol"], "calculation": "net_income / revenue"}
+                        ))
+
+                    if item.get("free_cash_flow"):
+                        findings.append(Finding(
+                            claim=f"{item['symbol']} free cash flow: {item['free_cash_flow']} USD",
+                            source=SourceRef(
+                                source_type=SourceType.SEC_FILING,
+                                source_name="SEC",
+                                url=None,
+                                credibility_score=1.0,
+                                fetched_at=datetime.utcnow()
+                            ),
+                            evidence_level=EvidenceLevel.DERIVED,
+                            confidence_score=0.95,
+                            timestamp=datetime.utcnow(),
+                            metadata={"symbol": item["symbol"], "calculation": "operating_cf - capex"}
+                        ))
+
                 elif item["fundamentals_status"] == "available":
                     evidence.append(
                         f"{item['symbol']} has SEC facts, but no compatible USD price "
@@ -181,6 +242,7 @@ class ValuationAgent(BaseAgent):
                     evidence.append(
                         f"{item['symbol']} has no stored SEC company facts."
                     )
+
             assessment_missing = [
                 "Peer and historical valuation comparisons.",
                 "Forward earnings estimates, growth assumptions, and a cash-flow "
@@ -195,14 +257,7 @@ class ValuationAgent(BaseAgent):
             return self._create_output(
                 True,
                 {
-                    "status": (
-                        "available"
-                        if has_fundamentals
-                        else "fundamentals_unavailable"
-                        if valuations
-                        else "no_eligible_holdings"
-                    ),
-                    "assets": valuations,
+                    "findings": [f.to_dict() for f in findings],  # NEW: Structured findings
                     "assessment": build_assessment(
                         finding=(
                             "Stored company facts and price records support a "
@@ -226,6 +281,15 @@ class ValuationAgent(BaseAgent):
                         ),
                         missing=assessment_missing,
                     ),
+                    # Keep legacy fields for backward compatibility
+                    "status": (
+                        "available"
+                        if has_fundamentals
+                        else "fundamentals_unavailable"
+                        if valuations
+                        else "no_eligible_holdings"
+                    ),
+                    "assets": valuations,
                     "limitations": (
                         [
                             "Financial-statement data is available only for reported filing periods; "

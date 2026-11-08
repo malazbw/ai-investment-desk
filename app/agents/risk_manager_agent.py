@@ -1,11 +1,13 @@
 """Deterministic portfolio concentration and price-coverage analysis."""
 
 import time
+from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.agents.base import AgentContext, AgentOutput, BaseAgent
 from app.agents.assessment import build_assessment
+from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
 from app.models import Asset, Holding, Price
 
 
@@ -120,15 +122,59 @@ class RiskManagerAgent(BaseAgent):
                     "unpriced holdings are excluded from the denominator."
                 )
 
+            # Extract structured findings for risk analysis
+            risk_findings: List[Finding] = []
+
+            # Add findings for each valued position
+            for position in valued[:10]:  # Top 10 positions
+                risk_findings.append(Finding(
+                    claim=f"{position['symbol']}: {position['weight_percent']}% of portfolio (USD {position['value_usd']})",
+                    source=SourceRef(
+                        source_type=SourceType.PRICE_DATA,
+                        source_name=position["price_source"],
+                        url=None,
+                        credibility_score=1.0 if position["price_source"] != "virtual_broker" else 0.3,
+                        fetched_at=datetime.fromisoformat(position["price_date"]) if position.get("price_date") else datetime.utcnow()
+                    ),
+                    evidence_level=EvidenceLevel.PRIMARY if position["price_source"] != "virtual_broker" else EvidenceLevel.SECONDARY,
+                    confidence_score=1.0 if position["price_source"] != "virtual_broker" else 0.5,
+                    timestamp=datetime.utcnow(),
+                    metadata={
+                        "symbol": position["symbol"],
+                        "weight_percent": position["weight_percent"],
+                        "value_usd": position["value_usd"],
+                        "quantity": position["quantity"],
+                        "price_source": position["price_source"],
+                        "price_date": position.get("price_date")
+                    }
+                ))
+
+            # Add concentration finding
+            if largest:
+                risk_findings.append(Finding(
+                    claim=f"Largest position concentration: {largest['symbol']} at {Decimal(largest['weight_percent']):.2f}%",
+                    source=SourceRef(
+                        source_type=SourceType.PORTFOLIO_DATA,
+                        source_name="Portfolio Analysis",
+                        url=None,
+                        credibility_score=1.0,
+                        fetched_at=datetime.utcnow()
+                    ),
+                    evidence_level=EvidenceLevel.DERIVED,
+                    confidence_score=0.9,
+                    timestamp=datetime.utcnow(),
+                    metadata={
+                        "largest_symbol": largest["symbol"],
+                        "weight_percent": largest["weight_percent"],
+                        "positions_counted": len(valued),
+                        "total_portfolio_usd": str(total_value)
+                    }
+                ))
+
             return self._create_output(
                 True,
                 {
-                    "status": "available" if valued else "insufficient_price_data",
-                    "valuation_currency": "USD",
-                    "valued_positions": len(valued),
-                    "unpriced_symbols": sorted(missing_prices),
-                    "total_valued_usd": str(total_value),
-                    "largest_positions": valued[:5],
+                    "findings": [f.to_dict() for f in risk_findings],  # NEW: Structured findings
                     "assessment": build_assessment(
                         finding=assessment_finding,
                         evidence=assessment_evidence,
@@ -149,6 +195,13 @@ class RiskManagerAgent(BaseAgent):
                         ),
                         missing=assessment_missing,
                     ),
+                    # Keep legacy fields for backward compatibility
+                    "status": "available" if valued else "insufficient_price_data",
+                    "valuation_currency": "USD",
+                    "valued_positions": len(valued),
+                    "unpriced_symbols": sorted(missing_prices),
+                    "total_valued_usd": str(total_value),
+                    "largest_positions": valued[:5],
                     "limitations": limitations,
                 },
                 execution_time_ms=(time.monotonic() - started) * 1000,

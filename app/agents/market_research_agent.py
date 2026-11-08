@@ -3,10 +3,11 @@
 import re
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.agents.base import AgentContext, AgentOutput, BaseAgent
 from app.agents.assessment import build_assessment
+from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
 from app.agents.tools import CompanyResearchTool, extract_company_symbols
 from app.services import NewsService
 
@@ -195,10 +196,16 @@ class MarketResearchAgent(BaseAgent):
             for article in articles:
                 finding = findings_by_symbol.setdefault(
                     article["symbol"],
-                    {"relevant_article_count": 0, "topics": set(), "articles": []},
+                    {
+                        "relevant_article_count": 0,
+                        "topics": set(),
+                        "articles": [],
+                        "tone_counts": {"positive_wording": 0, "negative_wording": 0, "mixed": 0, "not_clear_from_headline": 0},
+                    },
                 )
                 finding["relevant_article_count"] += 1
                 finding["topics"].update(article["topics"])
+                finding["tone_counts"][article["tone"]] += 1
                 finding["articles"].append(
                     {
                         "headline": article["headline"],
@@ -212,18 +219,48 @@ class MarketResearchAgent(BaseAgent):
                         "evidence_level": article["evidence_level"],
                     }
                 )
-            findings = {
-                symbol: {
+            findings = {}
+            for symbol, value in findings_by_symbol.items():
+                tone_counts = value["tone_counts"]
+                positive_count = tone_counts.get("positive_wording", 0)
+                negative_count = tone_counts.get("negative_wording", 0)
+                mixed_count = tone_counts.get("mixed", 0)
+                total_articles = value["relevant_article_count"]
+
+                # Calculate overall sentiment
+                if total_articles > 0:
+                    sentiment_score = (positive_count - negative_count) / total_articles
+                    if positive_count > negative_count * 1.5:
+                        overall_sentiment = "positive"
+                    elif negative_count > positive_count * 1.5:
+                        overall_sentiment = "negative"
+                    elif mixed_count > total_articles * 0.5:
+                        overall_sentiment = "mixed"
+                    else:
+                        overall_sentiment = "neutral"
+                else:
+                    sentiment_score = 0
+                    overall_sentiment = "neutral"
+
+                findings[symbol] = {
                     **value,
+                    "tone_counts": tone_counts,
+                    "sentiment_summary": {
+                        "positive_count": positive_count,
+                        "negative_count": negative_count,
+                        "mixed_count": mixed_count,
+                        "neutral_count": tone_counts.get("not_clear_from_headline", 0),
+                        "overall_sentiment": overall_sentiment,
+                        "sentiment_score": round(sentiment_score, 3),
+                    },
                     "topics": sorted(value["topics"]),
                     "summary": (
                         "Stored headlines mention "
                         + ", ".join(topic.replace("_", " ") for topic in sorted(value["topics"]))
-                        + ". Full article text was not fetched, so material impact cannot be confirmed."
+                        + f". Sentiment: {positive_count} positive, {negative_count} negative, {mixed_count} mixed articles. "
+                        + "Full article text was not fetched, so material impact cannot be confirmed."
                     ),
                 }
-                for symbol, value in findings_by_symbol.items()
-            }
             llm_analysis = None
             llm_analysis_status = "not_configured"
             analysis_warnings = []
@@ -341,20 +378,61 @@ class MarketResearchAgent(BaseAgent):
                     f" On-demand research was requested for "
                     f"{', '.join(external_symbols)}."
                 )
+
+            # Extract structured findings from articles
+            structured_findings: List[Finding] = []
+            for article in articles:
+                structured_findings.append(Finding(
+                    claim=f"{article['symbol']}: {article['headline']}",
+                    source=SourceRef(
+                        source_type=SourceType.NEWS_ARTICLE,
+                        source_name=article.get("source", "Unknown"),
+                        url=article.get("url"),
+                        credibility_score=0.6 if article.get("source") else 0.3,
+                        fetched_at=datetime.fromisoformat(article.get("published_date", "").replace("Z", "+00:00")) if article.get("published_date") else datetime.utcnow()
+                    ),
+                    evidence_level=EvidenceLevel.SECONDARY,
+                    confidence_score=0.5 if article.get("evidence_level") == "headline_only" else 0.6,
+                    timestamp=datetime.utcnow(),
+                    metadata={
+                        "symbol": article["symbol"],
+                        "tone": article.get("tone"),
+                        "topics": article.get("topics", []),
+                        "evidence_level": article.get("evidence_level"),
+                        "has_snippet": bool(article.get("description"))
+                    }
+                ))
+
+            # Add sentiment summary findings
+            for symbol, symbol_findings in findings.items():
+                sentiment_summary = symbol_findings.get("sentiment_summary", {})
+                if sentiment_summary.get("overall_sentiment"):
+                    structured_findings.append(Finding(
+                        claim=f"{symbol}: {symbol_findings['relevant_article_count']} articles with {sentiment_summary['overall_sentiment']} sentiment",
+                        source=SourceRef(
+                            source_type=SourceType.NEWS_ARTICLE,
+                            source_name="News Aggregate",
+                            url=None,
+                            credibility_score=0.5,
+                            fetched_at=datetime.utcnow()
+                        ),
+                        evidence_level=EvidenceLevel.DERIVED,
+                        confidence_score=0.5,
+                        timestamp=datetime.utcnow(),
+                        metadata={
+                            "symbol": symbol,
+                            "article_count": symbol_findings['relevant_article_count'],
+                            "positive_count": sentiment_summary.get("positive_count"),
+                            "negative_count": sentiment_summary.get("negative_count"),
+                            "sentiment_score": sentiment_summary.get("sentiment_score"),
+                            "topics": symbol_findings.get("topics", [])
+                        }
+                    ))
+
             return self._create_output(
                 True,
                 {
-                    "status": "available" if articles else "no_recent_news",
-                    "lookback_days": 30,
-                    "article_count": len(articles),
-                    "stored_article_count": len(stored_articles),
-                    "excluded_article_count": len(stored_articles) - len(articles),
-                    "articles": articles,
-                    "findings_by_symbol": findings,
-                    "on_demand_research": on_demand_research,
-                    "on_demand_analysis": (
-                        llm_analysis if on_demand_research else None
-                    ),
+                    "findings": [f.to_dict() for f in structured_findings],  # NEW: Structured findings
                     "assessment": build_assessment(
                         finding=assessment_finding,
                         evidence=assessment_evidence,
@@ -378,6 +456,18 @@ class MarketResearchAgent(BaseAgent):
                             "A wider source set and event impact analysis.",
                             "Unavailable on-demand sources listed for explicitly requested companies.",
                         ],
+                    ),
+                    # Keep legacy fields for backward compatibility
+                    "status": "available" if articles else "no_recent_news",
+                    "lookback_days": 30,
+                    "article_count": len(articles),
+                    "stored_article_count": len(stored_articles),
+                    "excluded_article_count": len(stored_articles) - len(articles),
+                    "articles": articles,
+                    "findings_by_symbol": findings,
+                    "on_demand_research": on_demand_research,
+                    "on_demand_analysis": (
+                        llm_analysis if on_demand_research else None
                     ),
                     "llm_analysis_status": llm_analysis_status,
                     "llm_analysis": llm_analysis,

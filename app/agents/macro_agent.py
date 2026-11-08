@@ -1,12 +1,13 @@
 """Macro context agent for the latest stored economic indicators."""
 
 import time
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.agents.base import AgentContext, AgentOutput, BaseAgent
 from app.agents.assessment import build_assessment
+from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel, build_fred_url
 from app.models import MacroIndicator
 from app.data_sources.fred import FREDFetcher
 
@@ -127,11 +128,34 @@ class MacroContextAgent(BaseAgent):
                 )
             )
 
+            # Extract structured findings for each macro indicator
+            macro_findings: List[Finding] = []
+            for series_id, item in indicators.items():
+                macro_findings.append(Finding(
+                    claim=f"{item['name']}: {item['value']} {item['units']}",
+                    source=SourceRef(
+                        source_type=SourceType.MACRO_DATA,
+                        source_name="FRED",
+                        url=build_fred_url(series_id),
+                        credibility_score=1.0,
+                        fetched_at=datetime.fromisoformat(item.get("fetched_at", "")) if item.get("fetched_at") else datetime.utcnow()
+                    ),
+                    evidence_level=EvidenceLevel.PRIMARY,
+                    confidence_score=0.9 if (date.today() - date.fromisoformat(item["date"])).days <= 10 else 0.7,
+                    timestamp=datetime.utcnow(),
+                    metadata={
+                        "series_id": series_id,
+                        "date": item["date"],
+                        "units": item["units"],
+                        "change_from_previous": item.get("change_from_previous"),
+                        "previous_date": item.get("previous", {}).get("date") if item.get("previous") else None
+                    }
+                ))
+
             return self._create_output(
                 True,
                 {
-                    "status": "available" if indicators else "no_data",
-                    "indicators": indicators,
+                    "findings": [f.to_dict() for f in macro_findings],  # NEW: Structured findings
                     "assessment": build_assessment(
                         finding=(
                             f"Stored FRED observations are available for "
@@ -159,6 +183,9 @@ class MacroContextAgent(BaseAgent):
                             ]
                         ),
                     ),
+                    # Keep legacy fields for backward compatibility
+                    "status": "available" if indicators else "no_data",
+                    "indicators": indicators,
                     "limitations": (
                         stale_indicators
                         if indicators

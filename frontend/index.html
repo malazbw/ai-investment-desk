@@ -268,6 +268,80 @@
                     botMsg.textContent = result.response;
                     messagesDiv.appendChild(botMsg);
 
+                    // Show findings with source attribution (if available)
+                    if (result.analysis) {
+                        const findingsGroups = [];
+
+                        for (const agentName in result.analysis) {
+                            const agentData = result.analysis[agentName];
+                            if (agentData.findings && Array.isArray(agentData.findings)) {
+                                agentData.findings.forEach(finding => {
+                                    if (finding.confidence_score >= 0.8) {
+                                        findingsGroups.push({
+                                            agent: agentName,
+                                            finding: finding,
+                                            confidence: 'high'
+                                        });
+                                    } else if (finding.confidence_score >= 0.5) {
+                                        findingsGroups.push({
+                                            agent: agentName,
+                                            finding: finding,
+                                            confidence: 'medium'
+                                        });
+                                    } else {
+                                        findingsGroups.push({
+                                            agent: agentName,
+                                            finding: finding,
+                                            confidence: 'low'
+                                        });
+                                    }
+                                });
+                            }
+                        }
+
+                        if (findingsGroups.length > 0) {
+                            // Group by confidence
+                            const highConfidence = findingsGroups.filter(f => f.confidence === 'high');
+                            const mediumConfidence = findingsGroups.filter(f => f.confidence === 'medium');
+                            const lowConfidence = findingsGroups.filter(f => f.confidence === 'low');
+
+                            if (highConfidence.length > 0 || mediumConfidence.length > 0) {
+                                const findingsMsg = document.createElement("div");
+                                findingsMsg.className = "bg-blue-50 p-4 rounded text-sm text-gray-800 mt-3 max-w-full";
+
+                                let html = '<strong>📋 Sources & Evidence:</strong><br>';
+
+                                if (highConfidence.length > 0) {
+                                    html += '<div style="margin-top: 8px;"><strong style="color: #047857;">Primary Sources (High Confidence)</strong><br>';
+                                    highConfidence.slice(0, 5).forEach(item => {
+                                        const f = item.finding;
+                                        const source = f.source;
+                                        const badge = f.evidence_level === 'primary' ? '🔐' : '📊';
+                                        if (source.url) {
+                                            html += `${badge} <a href="${escapeHtml(source.url)}" target="_blank" style="color: #0369a1; text-decoration: underline;">${escapeHtml(f.claim)}</a> <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                        } else {
+                                            html += `${badge} ${escapeHtml(f.claim)} <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                        }
+                                    });
+                                    html += '</div>';
+                                }
+
+                                if (mediumConfidence.length > 0) {
+                                    html += '<div style="margin-top: 8px;"><strong style="color: #b45309;">Secondary Sources</strong><br>';
+                                    mediumConfidence.slice(0, 3).forEach(item => {
+                                        const f = item.finding;
+                                        const source = f.source;
+                                        html += `📰 ${escapeHtml(f.claim)} <span style="color: #666; font-size: 0.85em;">(${escapeHtml(source.source_name)})</span><br>`;
+                                    });
+                                    html += '</div>';
+                                }
+
+                                findingsMsg.innerHTML = html;
+                                messagesDiv.appendChild(findingsMsg);
+                            }
+                        }
+                    }
+
                     // Save conversation ID
                     conversationId = result.conversation_id;
                     localStorage.setItem("conversationId", conversationId);
