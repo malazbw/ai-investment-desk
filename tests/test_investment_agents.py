@@ -398,6 +398,89 @@ async def test_market_research_agent_calls_tool_for_unheld_company_only():
 
 
 @pytest.mark.asyncio
+async def test_detailed_company_research_includes_requested_portfolio_company():
+    engine, session_factory = make_session_factory()
+    db = session_factory()
+    llm_calls = []
+
+    class FakeCompanyResearchTool:
+        def __init__(self):
+            self.symbols = []
+
+        async def research(self, symbol):
+            self.symbols.append(symbol)
+            return {
+                "symbol": symbol,
+                "sources": {
+                    "sec": {
+                        "status": "available",
+                        "annual_history": {"revenue": [{"value": "1000"}]},
+                    },
+                    "market_price": {"status": "available"},
+                    "news": {"status": "available"},
+                },
+                "valuation": {
+                    "latest_annual_facts": {
+                        "total_assets": {"value": "5000", "units": "USD"}
+                    }
+                },
+                "fundamental_analysis": {"findings": []},
+            }
+
+    class NewsLLM:
+        async def analyze(self, user_message, system_prompt, context):
+            llm_calls.append(
+                {
+                    "user_message": user_message,
+                    "system_prompt": system_prompt,
+                    "context": context,
+                }
+            )
+            return "Structured company research report."
+
+    try:
+        apple = seed_portfolio(db)
+        db.add(
+            CompanyNews(
+                symbol=apple.id,
+                headline="Apple earnings update",
+                url="https://example.test/aapl",
+                source="Example Finance",
+                published_date=datetime(2026, 11, 4),
+            )
+        )
+        db.commit()
+        tool = FakeCompanyResearchTool()
+
+        output = await MarketResearchAgent(tool).execute(
+            AgentContext(
+                user_message=(
+                    "Prepare a company profile for Apple covering products and how "
+                    "they build them, challenges, plans, value chain, competitors, "
+                    "competitive advantages, and financial statements."
+                ),
+                metadata={"db": db, "llm_client": NewsLLM()},
+            )
+        )
+
+        assert output.success
+        assert tool.symbols == ["AAPL"]
+        assert "Products and how the company makes or delivers them" in llm_calls[0][
+            "system_prompt"
+        ]
+        assert "do not invent products" in llm_calls[0]["system_prompt"].lower()
+        assert "under 450 words" in llm_calls[0]["system_prompt"]
+        assert llm_calls[0]["context"]["stored_portfolio_news"] == {}
+        assert "under 450 words" in llm_calls[0]["user_message"]
+        company_context = llm_calls[0]["context"]["on_demand_company_research"][0]
+        assert company_context["latest_annual_facts"]["total_assets"]["value"] == "5000"
+        assert company_context["annual_history"]["revenue"][0]["value"] == "1000"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_market_research_filters_ticker_noise_and_caveats_headline_analysis():
     engine, session_factory = make_session_factory()
     db = session_factory()
@@ -557,6 +640,34 @@ async def test_synthesis_agent_sends_specialist_results_to_llm():
     assert "Distinguish available historical growth from missing forward estimates" in (
         provider.calls[0]["system_prompt"]
     )
+
+
+@pytest.mark.asyncio
+async def test_synthesis_preserves_complete_detailed_company_report():
+    provider = StubProvider()
+    detailed_report = (
+        "1. Executive summary\nD-Wave report.\n"
+        "8. Key risks, evidence gaps, and sources\nSources listed."
+    )
+    output = await SynthesisAgent().execute(
+        AgentContext(
+            user_message="Prepare a detailed company profile for D-Wave Quantum.",
+            metadata={
+                "llm_client": LLMClient(provider),
+                "agent_outputs": {
+                    "market_research": {
+                        "on_demand_analysis": detailed_report,
+                    },
+                    "valuation": {"findings": [{"claim": "Unrelated holding"}]},
+                },
+            },
+        )
+    )
+
+    assert output.success
+    assert output.data["response"] == detailed_report
+    assert output.data["specialists_considered"] == ["market_research", "valuation"]
+    assert provider.calls == []
 
 
 class SessionCheckingAgent(BaseAgent):

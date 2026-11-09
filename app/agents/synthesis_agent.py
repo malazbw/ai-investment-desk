@@ -25,6 +25,29 @@ class SynthesisAgent(BaseAgent):
                 False, {}, "Specialist agent outputs not provided to synthesis agent"
             )
 
+        market_research = agent_outputs.get("market_research")
+        detailed_report = (
+            market_research.get("on_demand_analysis")
+            if isinstance(market_research, dict)
+            else None
+        )
+        if (
+            isinstance(detailed_report, str)
+            and detailed_report.startswith("1. Executive summary")
+            and "\n8. Key risks" in detailed_report
+        ):
+            return self._create_output(
+                True,
+                {
+                    "response": detailed_report,
+                    "specialists_considered": [
+                        name for name in agent_outputs if not name.startswith("_")
+                    ],
+                    "warnings": agent_outputs.get("_errors", []),
+                },
+                execution_time_ms=(time.monotonic() - started) * 1000,
+            )
+
         try:
             response = await client.analyze(
                 user_message=context.user_message,
