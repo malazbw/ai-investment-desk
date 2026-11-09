@@ -73,6 +73,7 @@ Rules:
 - Combine overlapping specialist findings; label a specialist only when its source or disagreement matters.
 - Include only evidence, counterpoints, confidence, and missing-data limits that materially affect the answer.
 - Distinguish available historical growth from missing forward estimates.
+- For valuation comparisons across multiple holdings, show the results in one compact Markdown table, with one row per holding and columns for ticker, P/E, diluted EPS, EPS period end, filing date, and price source/date when available. Put unavailable data in the relevant cell, and do not repeat table figures in a summary or bullets.
 - Preserve disagreements and data limitations; do not hide failed or unavailable specialists.
 - Do not issue buy, sell, or hold recommendations or promise investment returns.
 - Identify source, date, and currency where supplied.

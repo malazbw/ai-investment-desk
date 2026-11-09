@@ -80,11 +80,11 @@ class VirtualBroker(BrokerInterface):
                 current_price=Decimal("350.25"),
                 currency="USD"
             ),
-            "VOO": BrokerHolding(
-                symbol="VOO",
+            "NVDA": BrokerHolding(
+                symbol="NVDA",
                 quantity=Decimal("20"),
-                average_cost=Decimal("350.00"),
-                current_price=Decimal("425.75"),
+                average_cost=Decimal("130.00"),
+                current_price=Decimal("140.00"),
                 currency="USD"
             ),
         }

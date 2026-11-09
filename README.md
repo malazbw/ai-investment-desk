@@ -1,96 +1,85 @@
 # AI Investment Desk
 
-AI Investment Desk is a personal finance app for keeping your investment
-portfolio information in one place and exploring it through a dashboard and an
-AI-assisted chat. It brings together the holdings and transactions you record,
-prices and research data you import, and summaries that help you understand
-what is currently stored about your portfolio.
+AI Investment Desk is a personal portfolio tracking and investment research
+application. It brings together holdings you record, imported market and
+research data, and an AI-assisted chat that helps explain the information stored
+in your database.
 
-It is a portfolio tracking and research tool—not a bank, broker, or automated
-trading system. It does not connect to your accounts to trade or place orders.
-The quality of its analysis depends on the accuracy and freshness of the data
-you provide or import.
+It is a research and decision-support tool, not a broker or a source of
+personalized financial advice. The current broker integrations are placeholders;
+the app does not connect to brokerage accounts or place trades. Analysis depends
+on the data you provide and its freshness.
 
-## What can you do with it?
+## Screenshots
 
-- **See your portfolio at a glance:** review the recorded holdings, portfolio
-  value, costs, and gains or losses.
-- **Review your investments:** look up holdings and transaction history, and
-  save portfolio snapshots to compare over time.
-- **Ask questions in chat:** ask about the portfolio information in the app.
-  The app gathers relevant stored data and an AI model turns it into a readable
-  answer.
-- **Explore valuation information:** review stored prices and available company
-  financial facts for supported investments.
-- **Add or test portfolio data:** record transactions through the API or load
-  sample holdings using the virtual broker.
-- **Add research context:** import available company news, economic indicators,
-  financial facts, prices, and foreign-exchange rates using the documented API
-  endpoints.
+### Portfolio dashboard
 
-The app does not guarantee that data is current. Chat questions mainly use
-information already stored in the database; asking a question does not
-automatically refresh all data sources.
+Review portfolio value, data freshness, and the holdings table with each price
+source.
 
-## A simple example
+![AI Investment Desk portfolio dashboard](screenshots/Screenshot%20from%202026-11-09%2011-18-39.png)
 
-1. Start the app and open its dashboard or API documentation.
-2. Add portfolio information, or load the sample portfolio to explore the app.
-3. Import any optional research data you want to use.
-4. Ask a portfolio question in chat, such as “What holdings are recorded in my
-   portfolio?”
-5. Review the answer alongside the data and its source dates in the app.
+### AI valuation analysis
 
-The sample portfolio and its prices are for testing only; they are not live
-market data.
+Ask about the valuation inputs stored for your holdings and review their
+reported periods and sources.
 
-## How the AI and agents work
+![AI Investment Desk valuation analysis](screenshots/Screenshot%20from%202026-11-09%2011-19-13.png)
 
-When a user sends a chat message:
+Screenshots are examples; their figures can become outdated and are not
+investment advice or a promise of future performance.
 
-1. The app uses simple keyword and ticker matching to choose which available
-   specialists should handle the question. This routing is rule-based, not
-   performed by an AI model.
-2. The selected specialists read relevant information from the app's database
-   and return structured results.
-3. The app combines those results and sends them, along with the question, to
-   the configured language model (LLM).
-4. The LLM writes a natural-language answer based on the information it was
-   given.
+## What it does
 
-Currently, chat registers the **portfolio** and **valuation** agents. Code for
-market-research, macro-context, and risk agents also exists, but those agents
-are not currently registered with the chat endpoint. The AI does not directly
-read the database, make trades, or guarantee that its answer is correct.
+- **Portfolio tracking:** record holdings and transactions, review portfolio
+  summaries, and save historical snapshots.
+- **Research data:** import supported company facts, market prices, news,
+  economic observations, and exchange rates.
+- **AI-assisted analysis:** ask questions about stored portfolio and research
+  data, with source dates and missing-data limitations included when available.
+- **Virtual portfolio:** load sample holdings to explore the app without a
+  brokerage account.
 
-The app supports **Gemini**, **Claude**, and **Ollama** (a model served locally).
-Which one is used depends on the `LLM_PROVIDER` setting. Hosted providers need
-their own API key; Ollama needs its local service running.
+The app does not automatically refresh every source when you ask a chat
+question. Refresh data through the API or wait for a configured scheduled job.
+Stored and imported data can be delayed, incomplete, or unavailable.
 
-## What data does it use?
+## How chat works
 
-### Your portfolio
+The chat workflow uses LangGraph to coordinate the registered specialists:
+**portfolio**, **market research**, **macro**, **risk**, and **valuation**.
+Unless you choose specialists explicitly, the configured LLM selects which
+specialists are relevant. Selected specialists query stored data and run in
+parallel. A question handled only by the portfolio specialist can be answered
+directly; other results are combined by an LLM synthesis step.
 
-The app stores assets, holdings, transactions, prices, and historical portfolio
-snapshots in its database. It can use SQLite for local development or
-PostgreSQL. You can enter data through the API; the virtual broker supplies
-example data for testing.
+The market-research specialist can also request on-demand company research for
+an explicitly mentioned ticker. Depending on configuration, this may include
+SEC facts, an eToro quote, and news headlines or publisher-provided snippets.
+This research does not add the company to your portfolio. Full article text is
+not fetched.
 
-### Optional research sources
+Supported LLM providers are **Ollama**, **Gemini**, and **Claude**. Ollama is the
+default and expects a local service at `http://localhost:11434`; Gemini and
+Claude require their respective API keys. The LLM interprets specialist
+results; deterministic portfolio and valuation calculations are performed by
+application code.
 
-These sources require setup and may not be enabled in every installation:
+## Data sources
 
-| Source | Example data | Notes |
+| Source | Data | Configuration |
 | --- | --- | --- |
-| FRED | VIX, US interest rates, Treasury yields, and CPI | Imported economic observations; requires `FRED_API_KEY` |
-| SEC EDGAR | Company-reported financial facts | Requires an identifying `SEC_USER_AGENT` contact email |
-| NewsAPI | Company-news headlines and publisher descriptions | Uses headlines/snippets, not full article text; requires `NEWSAPI_KEY` |
-| eToro | Market quotes for supported instruments | Requires `ETORO_API_KEY` and `ETORO_USER_KEY` |
-| Frankfurter | EUR reference rates against USD, GBP, and CHF | Used for stored exchange-rate data |
+| SQLite or PostgreSQL | Portfolio, transactions, prices, and research records | SQLite is the local default; set `DATABASE_URL` for PostgreSQL |
+| eToro | USD quotes for supported portfolio instruments | `ETORO_API_KEY` and `ETORO_USER_KEY` |
+| SEC EDGAR | Reported company facts for supported holdings | `SEC_USER_AGENT` with a contact email |
+| FRED | Selected US economic indicators, including VIX, rates, and CPI | `FRED_API_KEY` |
+| NewsAPI | Company-news headlines and available publisher descriptions | `NEWSAPI_KEY` |
+| Frankfurter | EUR reference rates against USD, GBP, and CHF | No API key required |
 
-Imported economic, financial, and news data can be delayed or incomplete.
-`SETUP.md` describes the API endpoints for importing data and the required
-settings.
+The dashboard and chat identify stored price sources and dates where available.
+Virtual-broker prices are examples, not live quotes. When prices are missing or
+currencies differ, the portfolio summary reports incomplete or unavailable
+valuation rather than presenting an unsupported complete total.
 
 ## Run locally
 
@@ -104,14 +93,50 @@ python init_db.py
 python run.py
 ```
 
-The API is available at <http://localhost:8000>. Interactive API documentation
-is at <http://localhost:8000/docs>. Configure optional credentials in a local
-`.env` file. Never commit that file or put real credentials in this README.
+On Windows, activate the environment with `.venv\Scripts\activate` instead.
+The development server runs at <http://localhost:8000>.
 
-To load sample portfolio data:
+- **Dashboard:** <http://localhost:8000/static/index.html>
+- **Interactive API docs:** <http://localhost:8000/docs>
+- **Health check:** <http://localhost:8000/health>
+
+The API root (`/`) returns application status information; use the static URL
+above to open the dashboard.
+
+To load the virtual portfolio:
 
 ```bash
 curl -X POST http://localhost:8000/api/portfolio/sync/virtual
 ```
 
-For detailed setup and data-import instructions, see [SETUP.md](SETUP.md).
+The virtual broker loads sample data and is safe to use without broker
+credentials. Optional API keys and provider settings can be placed in a local
+`.env` file. Do not commit real credentials.
+
+For chat, select an LLM provider with `LLM_PROVIDER` (`ollama`, `gemini`, or
+`claude`). Ollama is the default; set `OLLAMA_API_URL` and `OLLAMA_MODEL` if
+your local server or model differs from the defaults. For hosted providers,
+configure `GEMINI_API_KEY` or `CLAUDE_API_KEY`. Optional data-source settings
+are listed above.
+
+## Useful API endpoints
+
+| Purpose | Endpoint |
+| --- | --- |
+| Portfolio summary and holdings | `GET /api/portfolio/summary`, `GET /api/portfolio/holdings` |
+| Data-source freshness | `GET /api/portfolio/data-status` |
+| Sample portfolio | `POST /api/portfolio/sync/virtual` |
+| Manual transactions and snapshots | `POST /api/portfolio/transactions`, `POST /api/portfolio/snapshot` |
+| eToro prices | `POST /api/prices/sync/etoro` |
+| SEC company facts | `POST /api/fundamentals/sync/sec` |
+| News for portfolio holdings | `POST /api/news/fetch-portfolio` |
+| FRED economic data | `POST /api/macro/jobs/daily`, `POST /api/macro/jobs/monthly` |
+| EUR reference rates | `POST /api/exchange-rates/sync` |
+| AI chat | `POST /api/chat/message` |
+
+The data-source sync endpoints require the credentials listed above where
+applicable. The application also schedules selected refresh jobs at startup;
+FRED and eToro jobs are enabled only when their credentials are configured.
+
+For detailed configuration, endpoint examples, and database setup, see
+[SETUP.md](SETUP.md).

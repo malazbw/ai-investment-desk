@@ -89,7 +89,7 @@ def test_portfolio_summary(clean_db):
     assert data["holdings_count"] == 3
     assert data["currency"] == "USD"
     assert data["valuation_status"] == "complete"
-    assert Decimal(str(data["total_gain_loss"])) == Decimal("2021.2500")
+    assert Decimal(str(data["total_gain_loss"])) == Decimal("706.2500")
 
 
 def test_get_holdings(clean_db):
@@ -218,7 +218,7 @@ def test_chat_analysis_does_not_change_portfolio(clean_db, monkeypatch):
     assert response.status_code == 200
     assert "AAPL: 10 units" in response.json()["response"]
     assert "MSFT: 5 units" in response.json()["response"]
-    assert "VOO: 20 units" in response.json()["response"]
+    assert "NVDA: 20 units" in response.json()["response"]
     assert "sample data, not live quotes" in response.json()["response"]
     assert response.json()["agents_used"] == ["portfolio"]
     assert len(provider.calls) == 1

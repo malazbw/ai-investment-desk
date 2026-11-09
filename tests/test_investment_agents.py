@@ -501,7 +501,7 @@ def test_virtual_broker_prices_are_valued_by_risk_agent():
         assert risk.success
         assert risk.data["status"] == "available"
         assert risk.data["unpriced_symbols"] == []
-        assert Decimal(risk.data["total_valued_usd"]) == Decimal("12021.25")
+        assert Decimal(risk.data["total_valued_usd"]) == Decimal("6306.25")
         assert {
             position["price_source"]
             for position in risk.data["largest_positions"]
@@ -514,9 +514,9 @@ def test_virtual_broker_prices_are_valued_by_risk_agent():
             position["symbol"]: Decimal(position["weight_percent"])
             for position in risk.data["largest_positions"]
         } == {
-            "AAPL": Decimal("1755") / Decimal("12021.25") * Decimal("100"),
-            "MSFT": Decimal("1751.25") / Decimal("12021.25") * Decimal("100"),
-            "VOO": Decimal("8515") / Decimal("12021.25") * Decimal("100"),
+            "AAPL": Decimal("1755") / Decimal("6306.25") * Decimal("100"),
+            "MSFT": Decimal("1751.25") / Decimal("6306.25") * Decimal("100"),
+            "NVDA": Decimal("2800") / Decimal("6306.25") * Decimal("100"),
         }
     finally:
         db.close()
@@ -552,6 +552,8 @@ async def test_synthesis_agent_sends_specialist_results_to_llm():
     assert "under 100 words" in provider.calls[0]["system_prompt"]
     assert "at most three short bullets" in provider.calls[0]["system_prompt"]
     assert "Combine overlapping specialist findings" in provider.calls[0]["system_prompt"]
+    assert "one compact Markdown table" in provider.calls[0]["system_prompt"]
+    assert "do not repeat table figures" in provider.calls[0]["system_prompt"]
     assert "Distinguish available historical growth from missing forward estimates" in (
         provider.calls[0]["system_prompt"]
     )

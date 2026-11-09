@@ -166,6 +166,10 @@
             background: var(--neutral-50);
         }
 
+        .chat-response-table {
+            margin: 8px 0;
+        }
+
         .ticker-cell {
             font-weight: 600;
             color: var(--neutral-900);
@@ -530,6 +534,78 @@
             document.getElementById("root").innerHTML = html;
         }
 
+        function parseTableRow(line) {
+            return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
+        }
+
+        function isTableSeparator(line) {
+            const cells = parseTableRow(line);
+            return cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+        }
+
+        function renderAssistantResponse(container, response) {
+            const lines = response.split(/\r?\n/);
+            let index = 0;
+
+            while (index < lines.length) {
+                if (
+                    index + 1 < lines.length
+                    && lines[index].includes("|")
+                    && isTableSeparator(lines[index + 1])
+                ) {
+                    const headers = parseTableRow(lines[index]);
+                    index += 2;
+                    const rows = [];
+                    while (index < lines.length && lines[index].includes("|")) {
+                        rows.push(parseTableRow(lines[index]));
+                        index += 1;
+                    }
+
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "holdings-table chat-response-table";
+                    const table = document.createElement("table");
+                    const thead = document.createElement("thead");
+                    const headerRow = document.createElement("tr");
+                    headers.forEach(header => {
+                        const cell = document.createElement("th");
+                        cell.textContent = header;
+                        headerRow.appendChild(cell);
+                    });
+                    thead.appendChild(headerRow);
+                    table.appendChild(thead);
+
+                    const tbody = document.createElement("tbody");
+                    rows.forEach(row => {
+                        const tableRow = document.createElement("tr");
+                        headers.forEach((_, cellIndex) => {
+                            const cell = document.createElement("td");
+                            cell.textContent = row[cellIndex] || "";
+                            tableRow.appendChild(cell);
+                        });
+                        tbody.appendChild(tableRow);
+                    });
+                    table.appendChild(tbody);
+                    wrapper.appendChild(table);
+                    container.appendChild(wrapper);
+                    continue;
+                }
+
+                const textLines = [];
+                while (
+                    index < lines.length
+                    && !(index + 1 < lines.length
+                        && lines[index].includes("|")
+                        && isTableSeparator(lines[index + 1]))
+                ) {
+                    textLines.push(lines[index]);
+                    index += 1;
+                }
+                const textBlock = document.createElement("div");
+                textBlock.textContent = textLines.join("\n");
+                container.appendChild(textBlock);
+            }
+        }
+
         // Send chat message
         async function sendMessage() {
             const input = document.getElementById("chatInput");
@@ -586,7 +662,7 @@
                     const botMsg = document.createElement("div");
                     botMsg.className = "chat-message bot-msg";
                     botMsg.style.cssText = "padding: 14px 16px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.6;";
-                    botMsg.textContent = result.response;
+                    renderAssistantResponse(botMsg, result.response);
                     messagesDiv.appendChild(botMsg);
 
                     // Show findings with source attribution (if available)
