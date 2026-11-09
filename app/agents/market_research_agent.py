@@ -1,4 +1,4 @@
-"""Portfolio market-research agent backed by stored company news."""
+"""Market-research agent with live news and portfolio research."""
 
 import re
 import time
@@ -10,6 +10,7 @@ from app.agents.assessment import build_assessment
 from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
 from app.agents.tools import CompanyResearchTool, extract_company_symbols
 from app.services import NewsService
+from app.data_sources.newsapi import NewsAPIFetcher
 
 COMPANY_TERMS = {
     "AAPL": ("apple", "iphone", "app store", "apple pay"),
@@ -210,12 +211,41 @@ class MarketResearchAgent(BaseAgent):
             )
 
         try:
-            articles_by_symbol = NewsService.get_portfolio_news(db, days=30, limit=10)
-            held_symbols = set(articles_by_symbol)
+            # Extract requested symbols from user message
             requested_symbols = extract_company_symbols(context.user_message)
             detailed_company_research = _is_detailed_company_research_request(
                 context.user_message
             )
+
+            # Try to fetch live news for all requested symbols
+            live_news_by_symbol = {}
+            for symbol in requested_symbols:
+                try:
+                    news_result = await NewsAPIFetcher.fetch_ticker_news(
+                        symbol,
+                        days=7,
+                        limit=10
+                    )
+                    live_news_by_symbol[symbol] = news_result
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to fetch live news for %s: %s",
+                        symbol,
+                        exc,
+                    )
+                    live_news_by_symbol[symbol] = {
+                        "ticker": symbol,
+                        "status": "error",
+                        "reason": str(exc),
+                        "articles": []
+                    }
+
+            # Fall back to stored portfolio news only if no live news sources
+            articles_by_symbol = {}
+            if not requested_symbols:
+                articles_by_symbol = NewsService.get_portfolio_news(db, days=30, limit=10)
+
+            held_symbols = set(articles_by_symbol)
             external_symbols = [
                 symbol for symbol in requested_symbols if symbol not in held_symbols
             ]
@@ -242,19 +272,39 @@ class MarketResearchAgent(BaseAgent):
                         }
                     )
 
+            # Combine stored and live articles
+            all_articles = []
+
+            # Add stored portfolio articles
             stored_articles = [
                 {"symbol": symbol, **article}
                 for symbol, symbol_articles in articles_by_symbol.items()
                 for article in symbol_articles
             ]
-            stored_articles.sort(
+            all_articles.extend(stored_articles)
+
+            # Add live news articles from NewsAPI
+            for symbol, news_result in live_news_by_symbol.items():
+                if news_result.get("status") == "success":
+                    for article in news_result.get("articles", []):
+                        all_articles.append({
+                            "symbol": symbol,
+                            **article,
+                            "is_live": True,
+                            "source_type": "newsapi"
+                        })
+
+            # Sort by recency
+            all_articles.sort(
                 key=lambda article: datetime.fromisoformat(
                     article["published_date"].replace("Z", "+00:00")
                 ).timestamp(),
                 reverse=True,
             )
+
+            # Analyze headlines for relevance
             articles = []
-            for article in stored_articles:
+            for article in all_articles:
                 assessment = self._analyze_headline(
                     article["symbol"],
                     article["headline"],
@@ -474,24 +524,31 @@ class MarketResearchAgent(BaseAgent):
             # Extract structured findings from articles
             structured_findings: List[Finding] = []
             for article in articles:
+                # Live news has higher credibility than stored articles
+                is_live = article.get("is_live", False)
+                credibility = 0.7 if is_live else 0.6
+                confidence = 0.65 if is_live else (0.5 if article.get("evidence_level") == "headline_only" else 0.6)
+
                 structured_findings.append(Finding(
                     claim=f"{article['symbol']}: {article['headline']}",
                     source=SourceRef(
                         source_type=SourceType.NEWS_ARTICLE,
                         source_name=article.get("source", "Unknown"),
                         url=article.get("url"),
-                        credibility_score=0.6 if article.get("source") else 0.3,
+                        credibility_score=credibility,
                         fetched_at=datetime.fromisoformat(article.get("published_date", "").replace("Z", "+00:00")) if article.get("published_date") else datetime.utcnow()
                     ),
                     evidence_level=EvidenceLevel.SECONDARY,
-                    confidence_score=0.5 if article.get("evidence_level") == "headline_only" else 0.6,
+                    confidence_score=confidence,
                     timestamp=datetime.utcnow(),
                     metadata={
                         "symbol": article["symbol"],
                         "tone": article.get("tone"),
                         "topics": article.get("topics", []),
                         "evidence_level": article.get("evidence_level"),
-                        "has_snippet": bool(article.get("description"))
+                        "has_snippet": bool(article.get("description")),
+                        "is_live": is_live,
+                        "source_type": article.get("source_type", "stored")
                     }
                 ))
 
