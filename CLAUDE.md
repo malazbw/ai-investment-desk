@@ -66,12 +66,15 @@ python run.py
 
 ### Phase 2: Multi-Agent Research System (CURRENT)
 - [x] Set up LangGraph + LangChain infrastructure
-- [ ] Build Research Agent (Tier 1: Valuation lookups)
-  - [ ] P/E ratio, EPS, market cap queries
-  - [ ] Dividend yield queries
-  - [ ] 52-week high/low queries
+- [x] Build LangGraph Orchestrator (LLM-based routing, no keyword matching)
+- [x] Build Research Agent (Tier 1: Valuation lookups)
+  - [x] P/E ratio, EPS, market cap queries
+  - [x] Dividend yield queries
+  - [x] 52-week high/low queries
+  - [ ] Tier 2: News & events integration
+  - [ ] Tier 3: SEC filing RAG search
 - [ ] Build Discovery Agent (market scanning)
-- [ ] Build Orchestrator with LangGraph workflow
+- [ ] Build News Agent (real-time headlines & sentiment)
 - [ ] Implement RAG for SEC filing search (Tier 3)
 - [ ] Implement earnings transcript analysis (Tier 3)
 - [ ] Enhanced findings display in frontend
@@ -126,24 +129,45 @@ SELECT * FROM holdings; # View holdings
 
 ### Multi-Agent System with LangGraph
 
+**Orchestrator Flow:**
+1. **Route** - LLM intelligently decides which agents to run (no keyword matching)
+2. **Execute** - Selected agents run in parallel
+3. **Synthesize** - LLM combines findings into final answer
+
 **Agent Types:**
 1. **Portfolio Agent** - Tracks holdings, gains/losses, sector exposure
-2. **Research Agent** - Analyzes individual stocks (valuation, news, SEC filings)
-3. **Discovery Agent** - Scans market for investment ideas
-4. **Synthesizer Agent** - Combines findings from other agents
+2. **Research Agent** (Tier 1, 2, 3) - Company analysis:
+   - **Tier 1**: Valuation metrics (P/E, EPS, dividend, market cap, 52-week high/low)
+   - **Tier 2**: News, events, regulatory announcements
+   - **Tier 3**: SEC filing RAG search, earnings transcript analysis
+3. **News Agent** - Real-time headlines and market sentiment
+4. **Discovery Agent** - Market scanning for investment ideas
+5. **Synthesizer Agent** - Combines findings via LLM
 
-**Orchestration:**
-- Uses **LangGraph** for workflow management
-- Agents run in parallel via LangGraph state graph
+**Orchestration Architecture:**
+```
+User Query
+    ↓
+Orchestrator.route() → LLM decides agents (no keyword matching)
+    ↓
+Orchestrator.execute() → Run selected agents in parallel
+    ↓
+Orchestrator.synthesize() → LLM combines findings
+    ↓
+Final Answer with Source Attribution
+```
+
+- Uses **LangGraph** for state management and workflow
+- Agents run concurrently via `execute_agents_parallel()`
 - **LangChain** for:
-  - RAG over SEC filings (10-K, 10-Q, 8-K)
+  - RAG over SEC filings (10-K, 10-Q, 8-K) - Tier 3
   - Document processing and chunking
   - Vector search and semantic retrieval
   - LLM prompt management
 
 ### Agent Findings & Sources
 - Every finding includes source attribution (Finding + SourceRef dataclasses)
-- Credibility scores (0-1) based on source type (SEC=1.0, news=0.7, etc.)
+- Credibility scores (0-1) based on source type (SEC=1.0, news=0.7, yfinance=0.9, etc.)
 - Evidence levels: primary, secondary, derived
 - URLs and metadata preserved for traceability
 
@@ -231,22 +255,43 @@ See `.env.example` for required configuration:
 4. Use `Finding` + `SourceRef` for source-attributed results
 5. Register in `app/orchestrator/orchestrator.py` (not routes.py)
 
-### LangGraph Orchestrator Pattern
+### Orchestrator Usage
 ```python
-from langgraph.graph import StateGraph, END
+from app.orchestrator import Orchestrator
 
-workflow = StateGraph(AgentState)
-workflow.add_node("portfolio", run_portfolio_agent)
-workflow.add_node("research", run_research_agent)
-workflow.add_node("discovery", run_discovery_agent)
-workflow.add_node("synthesizer", synthesize_results)
-workflow.add_edge("portfolio", "synthesizer")
-workflow.add_edge("research", "synthesizer")
-workflow.add_edge("discovery", "synthesizer")
-workflow.add_edge("synthesizer", END)
+# Initialize with agents
+orchestrator = Orchestrator({
+    "portfolio": PortfolioAgent(),
+    "research": ResearchAgent(),
+    "news": NewsAgent(),
+    "discovery": DiscoveryAgent(),
+})
 
-orchestrator = workflow.compile()
+# Run orchestrator
+state = await orchestrator.ainvoke(
+    user_query="What is Microsoft's P/E ratio?",
+    llm_client=llm_client,
+    db_factory=get_session_factory(),
+    mcp_client=mcp_client,
+)
+
+response = state["response"]  # Final answer with sources
 ```
+
+### LangGraph Workflow Pattern
+```
+START
+  ↓
+_route (LLM: which agents?)
+  ↓
+_execute (Run agents in parallel)
+  ↓
+_synthesize (LLM: combine findings)
+  ↓
+END
+```
+
+**Key: No keyword matching** - LLM intelligently decides based on user intent, not hardcoded rules.
 
 ### Finding Source Attribution Pattern
 ```python

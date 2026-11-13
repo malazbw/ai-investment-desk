@@ -34,13 +34,10 @@ from app.agents import (
     MarketResearchAgent,
     RiskManagerAgent,
 )
-from app.agents.assistant_workflow import (
-    AssistantWorkflow,
-    AssistantWorkflowError,
-    UnknownAgentError,
-)
 from app.agents.portfolio_agent import PortfolioAgent
 from app.agents.valuation_agent import ValuationAgent
+from app.agents.research_agent import ResearchAgent
+from app.orchestrator.orchestrator import Orchestrator
 from app.llm.client import LLMClient
 from app.mcp.portfolio_server import PortfolioToolsService
 from app.llm.context_builder import ContextBuilder
@@ -64,16 +61,18 @@ db_factory = get_session_factory()
 tools_service = PortfolioToolsService(db_factory)
 mcp_client = tools_service.get_client()
 
-# Initialize agents and router
+# Initialize agents for orchestrator
 agents = {
     "portfolio": PortfolioAgent(),
+    "research": ResearchAgent(),
     "market_research": MarketResearchAgent(),
     "macro": MacroContextAgent(),
     "risk": RiskManagerAgent(),
     "valuation": ValuationAgent(),
 }
-agent_router = AgentRouter(agents)
-assistant_workflow = AssistantWorkflow(agent_router, mcp_client=mcp_client)
+
+# Initialize LangGraph orchestrator
+orchestrator = Orchestrator(agents)
 
 # Initialize LLM client based on config
 llm_client = None
@@ -501,36 +500,21 @@ async def chat_message(chat_msg: ChatMessage):
         logger.info(f"[CHAT] Conversation ID: {conversation_id}")
 
         try:
-            workflow_state = await assistant_workflow.ainvoke(
-                user_message=chat_msg.message,
+            orchestrator_state = await orchestrator.ainvoke(
+                user_query=chat_msg.message,
                 llm_client=llm_client,
                 db_factory=get_session_factory(),
                 mcp_client=mcp_client,
-                include_agents=chat_msg.include_agents,
             )
-        except UnknownAgentError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ValueError as exc:
-            logger.error("Agent routing failed: %s", exc, exc_info=True)
-            raise HTTPException(
-                status_code=502,
-                detail="Could not determine which specialists should handle this question.",
-            ) from exc
-        except AssistantWorkflowError as exc:
-            logger.error("Assistant workflow could not answer: %s", exc, exc_info=True)
-            raise HTTPException(
-                status_code=502,
-                detail=str(exc),
-            ) from exc
         except Exception as exc:
-            logger.error("Assistant workflow failed: %s", exc, exc_info=True)
+            logger.error("Orchestrator failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail="The assistant workflow failed. Check server logs and retry.",
+                detail="The orchestrator failed to process your query. Check server logs and retry.",
             ) from exc
 
-        agent_outputs = workflow_state["agent_outputs"]
-        response_text = workflow_state["response"]
+        agent_outputs = orchestrator_state.get("agent_outputs", [])
+        response_text = orchestrator_state.get("response", "")
         context_dict = ContextBuilder.build_context(agent_outputs)
 
         # Return response
@@ -539,7 +523,7 @@ async def chat_message(chat_msg: ChatMessage):
             conversation_id=conversation_id,
             analysis=context_dict,
             timestamp=datetime.utcnow(),
-            agents_used=[a.agent_name for a in agent_outputs]
+            agents_used=[a.agent_name for a in agent_outputs if hasattr(a, 'agent_name')]
         )
 
     except HTTPException:
