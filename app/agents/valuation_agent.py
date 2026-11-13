@@ -9,6 +9,7 @@ from app.agents.base import AgentContext, AgentOutput, BaseAgent
 from app.agents.assessment import build_assessment
 from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel, build_sec_url
 from app.models import Asset, AssetType, CompanyFinancialFact, Holding, Price
+from app.services.yahoo_finance import YahooFinanceService
 
 
 class ValuationAgent(BaseAgent):
@@ -39,6 +40,12 @@ class ValuationAgent(BaseAgent):
                 .order_by(Asset.symbol)
                 .all()
             )
+
+            # Fetch Yahoo Finance data for all symbols in parallel
+            yahoo_service = YahooFinanceService()
+            symbols = [asset.symbol for asset in assets]
+            yahoo_data = await yahoo_service.get_multiple(symbols) if symbols else {}
+
             valuations: List[Dict[str, Any]] = []
             for asset in assets:
                 latest_price = (
@@ -166,6 +173,10 @@ class ValuationAgent(BaseAgent):
             findings: List[Finding] = []
 
             for item in valuations:
+                symbol = item["symbol"]
+                yahoo_fundamentals = yahoo_data.get(symbol, {})
+
+                # Use Yahoo Finance P/E if SEC data not available
                 if item["pe_ratio"] is not None:
                     eps = item["diluted_eps"]
                     evidence.append(
@@ -183,7 +194,7 @@ class ValuationAgent(BaseAgent):
                         source=SourceRef(
                             source_type=SourceType.SEC_FILING,
                             source_name=f"SEC {eps['form']}",
-                            url=None,  # Could build from accession number if available
+                            url=None,
                             credibility_score=1.0,
                             fetched_at=datetime.fromisoformat(eps['filed_date'])
                         ),
@@ -198,6 +209,29 @@ class ValuationAgent(BaseAgent):
                             "eps": eps["value"],
                             "eps_period_end": eps["period_end"],
                             "form": eps["form"]
+                        }
+                    ))
+                elif "error" not in yahoo_fundamentals and yahoo_fundamentals.get("valuation", {}).get("pe_trailing"):
+                    # Use Yahoo Finance P/E
+                    pe = yahoo_fundamentals["valuation"]["pe_trailing"]
+                    evidence.append(f"{symbol} trailing P/E: {pe} (Yahoo Finance)")
+                    findings.append(Finding(
+                        claim=f"{symbol} P/E ratio (trailing): {pe}",
+                        source=SourceRef(
+                            source_type=SourceType.PRICE_DATA,
+                            source_name="Yahoo Finance",
+                            url=None,
+                            credibility_score=0.95,
+                            fetched_at=datetime.fromisoformat(yahoo_fundamentals.get("fetched_at", datetime.utcnow().isoformat()))
+                        ),
+                        evidence_level=EvidenceLevel.PRIMARY,
+                        confidence_score=0.95,
+                        timestamp=datetime.utcnow(),
+                        metadata={
+                            "symbol": symbol,
+                            "pe_ratio": pe,
+                            "pe_type": "trailing",
+                            "source": "Yahoo Finance"
                         }
                     ))
 
@@ -216,6 +250,23 @@ class ValuationAgent(BaseAgent):
                             timestamp=datetime.utcnow(),
                             metadata={"symbol": item["symbol"], "calculation": "net_income / revenue"}
                         ))
+                elif "error" not in yahoo_fundamentals and yahoo_fundamentals.get("profitability", {}).get("profit_margin"):
+                    # Use Yahoo Finance profit margin
+                    pm = yahoo_fundamentals["profitability"]["profit_margin"]
+                    findings.append(Finding(
+                        claim=f"{symbol} profit margin: {pm*100:.2f}%",
+                        source=SourceRef(
+                            source_type=SourceType.PRICE_DATA,
+                            source_name="Yahoo Finance",
+                            url=None,
+                            credibility_score=0.95,
+                            fetched_at=datetime.fromisoformat(yahoo_fundamentals.get("fetched_at", datetime.utcnow().isoformat()))
+                        ),
+                        evidence_level=EvidenceLevel.PRIMARY,
+                        confidence_score=0.95,
+                        timestamp=datetime.utcnow(),
+                        metadata={"symbol": symbol, "source": "Yahoo Finance"}
+                    ))
 
                     if item.get("free_cash_flow"):
                         findings.append(Finding(

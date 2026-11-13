@@ -1,14 +1,12 @@
 """
-Portfolio Agent - analyzes user's holdings and portfolio
+Portfolio Agent - analyzes user's holdings via MCP tools (no direct DB access)
 """
 import time
+import json
 from datetime import datetime
 from app.agents.base import BaseAgent, AgentContext, AgentOutput
 from app.agents.assessment import build_assessment
 from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
-from app.models import Price
-from app.services import PortfolioService
-from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 import logging
 from decimal import Decimal
@@ -17,17 +15,17 @@ logger = logging.getLogger(__name__)
 
 
 class PortfolioAgent(BaseAgent):
-    """Agent that queries portfolio data from database"""
+    """Agent that queries portfolio data ONLY via MCP tools"""
 
     def __init__(self):
         super().__init__(name="portfolio")
 
     async def execute(self, context: AgentContext) -> AgentOutput:
         """
-        Get portfolio data for analysis.
+        Get portfolio data for analysis via MCP tools ONLY.
 
         Args:
-            context: Must contain 'db' in metadata
+            context: Must contain 'mcp_client' in metadata
 
         Returns:
             AgentOutput with portfolio summary and holdings
@@ -37,164 +35,39 @@ class PortfolioAgent(BaseAgent):
         logger.info(f"[PortfolioAgent] Input message: {context.user_message}")
 
         try:
-            db = context.metadata.get("db")
-            if not db:
-                raise ValueError("Database session not provided in context")
+            mcp_client = context.metadata.get("mcp_client")
+            if not mcp_client:
+                raise ValueError("MCP client not provided in context")
 
-            # Get portfolio summary
-            summary = PortfolioService.get_portfolio_summary(db)
+            logger.info("[PortfolioAgent] Using MCP ONLY for portfolio data")
 
-            # Get all holdings
-            holdings = PortfolioService.get_all_holdings(db)
+            # Get all portfolio data from MCP
+            summary_result = await mcp_client.call_tool("get_portfolio_summary", {})
+            if "error" in summary_result:
+                raise ValueError(f"MCP error: {summary_result['error']}")
 
-            # Get recent transactions
-            transactions = PortfolioService.get_recent_transactions(db, days=30)
+            holdings_result = await mcp_client.call_tool("get_all_holdings", {})
+            if "error" in holdings_result:
+                raise ValueError(f"MCP error: {holdings_result['error']}")
 
-            holding_data = []
-            for holding in holdings:
-                asset = holding.asset
-                latest_price = (
-                    db.query(Price)
-                    .filter(Price.asset_id == asset.id)
-                    .order_by(Price.price_date.desc(), Price.id.desc())
-                    .first()
-                    if asset
-                    else None
-                )
-                holding_data.append(
-                    {
-                        "symbol": asset.symbol if asset else "unknown",
-                        "name": asset.name if asset else "unknown",
-                        "quantity": str(holding.quantity),
-                        "average_cost": str(holding.average_cost),
-                        "total_cost": str(holding.total_cost),
-                        "current_price": (
-                            str(holding.current_price)
-                            if holding.current_price is not None
-                            else None
-                        ),
-                        "current_value": (
-                            str(holding.current_value)
-                            if holding.current_value is not None
-                            else None
-                        ),
-                        "gain_loss": (
-                            str(holding.gain_loss)
-                            if holding.gain_loss is not None else None
-                        ),
-                        "gain_loss_percent": (
-                            str(holding.gain_loss_percent)
-                            if holding.gain_loss_percent is not None else None
-                        ),
-                        "broker": (
-                            holding.broker.value if holding.broker else "unknown"
-                        ),
-                        "price_source": latest_price.source if latest_price else None,
-                        "price_currency": (
-                            holding.price_currency if latest_price else None
-                        ),
-                        "price_date": (
-                            latest_price.price_date.isoformat()
-                            if latest_price
-                            else None
-                        ),
-                        "price_freshness": holding.price_freshness,
-                    }
-                )
+            transactions_result = await mcp_client.call_tool("get_recent_transactions", {"days": 30})
+            if "error" in transactions_result:
+                raise ValueError(f"MCP error: {transactions_result['error']}")
 
-            priced_values = [
-                holding
-                for holding in holding_data
-                if holding["current_value"] is not None
-                and holding["price_currency"] is not None
-                and Decimal(holding["current_value"]) > 0
-            ]
-            valuation_currencies = {
-                holding["price_currency"] for holding in priced_values
-            }
-            valued_holdings = (
-                priced_values if len(valuation_currencies) <= 1 else []
-            )
-            total_valued = sum(
-                (Decimal(str(holding["current_value"])) for holding in valued_holdings),
-                Decimal("0"),
-            )
-            largest_holding = max(
-                valued_holdings,
-                key=lambda holding: Decimal(str(holding["current_value"])),
-                default=None,
-            )
-            largest_weight = (
-                Decimal(str(largest_holding["current_value"]))
-                / total_valued
-                * Decimal("100")
-                if largest_holding and total_valued
-                else None
-            )
-            price_sources = sorted(
-                {
-                    holding["price_source"] or "unknown"
-                    for holding in holding_data
-                    if holding["current_value"] is not None
-                }
-            )
-            assessment_evidence = [
-                (
-                    f"{len(holding_data)} stored holdings; total value "
-                    f"{summary.total_value} {summary.currency}."
-                    if summary.total_value is not None
-                    else (
-                        f"{len(holding_data)} stored holdings; no combined total "
-                        "is available because currencies are mixed."
-                    )
-                )
-            ]
-            if largest_holding and largest_weight is not None:
-                assessment_evidence.append(
-                    f"Largest stored position is {largest_holding['symbol']} "
-                    f"at {largest_weight:.2f}% of valued holdings."
-                )
-            if valued_holdings:
-                assessment_evidence.append(
-                    "Price sources: " + ", ".join(price_sources) + "."
-                )
-            has_sample_prices = "virtual_broker" in price_sources
-            assessment_missing = [
-                "The database may not include accounts or assets held elsewhere.",
-                "Investment goals, time horizon, and risk tolerance are not provided.",
-            ]
-            if has_sample_prices:
-                assessment_missing.append(
-                    "A virtual_broker price is sample data, not a live market quote."
-                )
-            if summary.valuation_status == "partial":
-                assessment_missing.append(
-                    "Some holdings have no usable stored price, so the portfolio "
-                    "gain/loss is unavailable and total value is partial."
-                )
-            elif summary.valuation_status == "mixed_currency":
-                assessment_missing.append(
-                    "Holdings or prices use different currencies; no combined "
-                    "portfolio value or gain/loss is calculated."
-                )
-            assessment_finding = (
-                f"The stored portfolio contains {len(holding_data)} holdings."
-                if holding_data
-                else "No holdings are stored in the portfolio."
-            )
-            if largest_holding and largest_weight is not None:
-                assessment_finding += (
-                    f" {largest_holding['symbol']} is the largest at "
-                    f"{largest_weight:.2f}% of valued holdings."
-                )
+            # Extract data - all clean dicts from MCP
+            summary_dict = summary_result
+            holding_data = holdings_result.get("holdings", [])
+            transactions_raw = transactions_result.get("transactions", [])
+
+            logger.info(f"[PortfolioAgent] Got {len(holding_data)} holdings from MCP")
 
             # Extract structured findings
             findings: List[Finding] = []
 
             # Finding 1: Portfolio summary
-            if summary.total_value is not None:
+            if summary_dict.get("total_value") is not None:
                 findings.append(Finding(
-                    claim=f"Total portfolio value: {summary.total_value} {summary.currency}",
+                    claim=f"Total portfolio value: {summary_dict['total_value']} {summary_dict.get('currency', 'USD')}",
                     source=SourceRef(
                         source_type=SourceType.PORTFOLIO_DATA,
                         source_name="Portfolio Database",
@@ -205,12 +78,12 @@ class PortfolioAgent(BaseAgent):
                     evidence_level=EvidenceLevel.PRIMARY,
                     confidence_score=1.0,
                     timestamp=datetime.utcnow(),
-                    metadata={"status": summary.valuation_status}
+                    metadata={"status": summary_dict.get("valuation_status")}
                 ))
 
-                if summary.total_gain_loss is not None:
+                if summary_dict.get("total_gain_loss") is not None:
                     findings.append(Finding(
-                        claim=f"Total gain/loss: {summary.total_gain_loss} ({summary.total_gain_loss_percent}%)",
+                        claim=f"Total gain/loss: {summary_dict['total_gain_loss']} ({summary_dict.get('total_gain_loss_percent')}%)",
                         source=SourceRef(
                             source_type=SourceType.PORTFOLIO_DATA,
                             source_name="Portfolio Database",
@@ -226,95 +99,64 @@ class PortfolioAgent(BaseAgent):
 
             # Finding 2: Each holding
             for holding in holding_data:
-                if holding["current_value"] is not None and Decimal(holding["current_value"]) > 0:
+                if holding.get("current_value") and Decimal(holding["current_value"]) > 0:
                     findings.append(Finding(
                         claim=f"{holding['symbol']}: {holding['quantity']} units @ {holding['current_price']} = {holding['current_value']}",
                         source=SourceRef(
                             source_type=SourceType.PRICE_DATA,
-                            source_name=holding["price_source"] or "Unknown",
+                            source_name="Portfolio Database",
                             url=None,
-                            credibility_score=1.0 if holding["price_source"] != "virtual_broker" else 0.3,
-                            fetched_at=datetime.fromisoformat(holding["price_date"]) if holding["price_date"] else datetime.utcnow()
+                            credibility_score=1.0,
+                            fetched_at=datetime.utcnow()
                         ),
-                        evidence_level=EvidenceLevel.PRIMARY if holding["price_source"] != "virtual_broker" else EvidenceLevel.SECONDARY,
-                        confidence_score=1.0 if holding["price_source"] != "virtual_broker" else 0.5,
+                        evidence_level=EvidenceLevel.PRIMARY,
+                        confidence_score=1.0,
                         timestamp=datetime.utcnow(),
                         metadata={
                             "symbol": holding["symbol"],
-                            "quantity": holding["quantity"],
-                            "gain_loss": holding["gain_loss"],
-                            "gain_loss_percent": holding["gain_loss_percent"],
-                            "price_source": holding["price_source"],
-                            "price_date": holding["price_date"],
-                            "is_sample": holding["price_source"] == "virtual_broker"
+                            "gain_loss": holding.get("gain_loss"),
+                            "gain_loss_percent": holding.get("gain_loss_percent"),
                         }
                     ))
 
+            # Format assessment
+            assessment_evidence = [
+                f"{len(holding_data)} stored holdings; total value {summary_dict.get('total_value')} {summary_dict.get('currency', 'USD')}."
+            ]
+
+            if holding_data:
+                biggest = max(holding_data, key=lambda h: float(h.get("current_value", 0) or 0), default=None)
+                if biggest:
+                    total_value = float(summary_dict.get("total_value", 0))
+                    weight = (float(biggest["current_value"]) / total_value * 100) if total_value > 0 else 0
+                    assessment_evidence.append(f"Largest position is {biggest['symbol']} at {weight:.2f}% of portfolio.")
+
+            assessment_missing = [
+                "The database may not include accounts held elsewhere.",
+                "Investment goals and risk tolerance are not provided.",
+            ]
+
+            assessment_finding = f"Portfolio contains {len(holding_data)} holdings."
+
             # Format data
             data = {
-                "findings": [f.to_dict() for f in findings],  # NEW: Structured findings with sources
+                "findings": [f.to_dict() for f in findings],
                 "assessment": build_assessment(
                     finding=assessment_finding,
                     evidence=assessment_evidence,
-                    meaning=(
-                        "This describes only the holdings and price records stored "
-                        "in this desk; it is not a complete personal financial picture."
-                    ),
-                    counterpoint=(
-                        "Concentration within these records may overstate or understate "
-                        "your overall exposure if other accounts or assets are missing."
-                    ),
-                    confidence=(
-                        "High for arithmetic on stored records; low for completeness "
-                        "or current market value when prices are sample or stale."
-                    ),
+                    meaning="This describes the portfolio holdings retrieved via MCP tools.",
+                    counterpoint="Actual portfolio may include other accounts or assets.",
+                    confidence="High for accuracy of stored records; depends on data freshness.",
                     missing=assessment_missing,
                 ),
-                # Keep legacy fields for backward compatibility
-                "portfolio_summary": {
-                    "total_value": (
-                        str(summary.total_value)
-                        if summary.total_value is not None
-                        else None
-                    ),
-                    "total_cost": (
-                        str(summary.total_cost)
-                        if summary.total_cost is not None
-                        else None
-                    ),
-                    "total_gain_loss": (
-                        str(summary.total_gain_loss)
-                        if summary.total_gain_loss is not None
-                        else None
-                    ),
-                    "total_gain_loss_percent": (
-                        str(summary.total_gain_loss_percent)
-                        if summary.total_gain_loss_percent is not None
-                        else None
-                    ),
-                    "cash_value": str(summary.cash_value),
-                    "currency": summary.currency,
-                    "valuation_status": summary.valuation_status,
-                    "unpriced_holdings": summary.unpriced_holdings,
-                },
+                "portfolio_summary": summary_dict,
                 "holdings": holding_data,
-                "recent_transactions": [
-                    {
-                        "symbol": t.asset.symbol if t.asset else "unknown",
-                        "type": t.transaction_type.value if t.transaction_type else "unknown",
-                        "quantity": str(t.quantity),
-                        "price": str(t.price),
-                        "date": t.transaction_date.isoformat() if t.transaction_date else None,
-                        "broker": t.broker.value if t.broker else "unknown",
-                    }
-                    for t in transactions
-                ],
+                "recent_transactions": transactions_raw,
             }
 
             execution_time = (time.time() - start_time) * 1000
 
-            logger.info(f"[PortfolioAgent] Successfully processed {len(holdings)} holdings")
-            logger.debug(f"[PortfolioAgent] Output data keys: {list(data.keys())}")
+            logger.info(f"[PortfolioAgent] Successfully processed {len(holding_data)} holdings via MCP")
 
             return self._create_output(
                 success=True,
@@ -324,6 +166,8 @@ class PortfolioAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Portfolio agent error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             execution_time = (time.time() - start_time) * 1000
             logger.error(f"[PortfolioAgent] Failed after {execution_time:.2f}ms: {e}")
             return self._create_output(

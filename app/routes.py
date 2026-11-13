@@ -42,6 +42,7 @@ from app.agents.assistant_workflow import (
 from app.agents.portfolio_agent import PortfolioAgent
 from app.agents.valuation_agent import ValuationAgent
 from app.llm.client import LLMClient
+from app.mcp.portfolio_server import PortfolioToolsService
 from app.llm.context_builder import ContextBuilder
 from app.llm.providers import LLMFactory
 
@@ -58,6 +59,11 @@ chat_router = APIRouter(prefix="/api/chat", tags=["chat"])
 # Initialize brokers
 virtual_broker = VirtualBroker()
 
+# Initialize portfolio tools service
+db_factory = get_session_factory()
+tools_service = PortfolioToolsService(db_factory)
+mcp_client = tools_service.get_client()
+
 # Initialize agents and router
 agents = {
     "portfolio": PortfolioAgent(),
@@ -67,7 +73,7 @@ agents = {
     "valuation": ValuationAgent(),
 }
 agent_router = AgentRouter(agents)
-assistant_workflow = AssistantWorkflow(agent_router)
+assistant_workflow = AssistantWorkflow(agent_router, mcp_client=mcp_client)
 
 # Initialize LLM client based on config
 llm_client = None
@@ -499,6 +505,7 @@ async def chat_message(chat_msg: ChatMessage):
                 user_message=chat_msg.message,
                 llm_client=llm_client,
                 db_factory=get_session_factory(),
+                mcp_client=mcp_client,
                 include_agents=chat_msg.include_agents,
             )
         except UnknownAgentError as exc:

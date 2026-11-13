@@ -26,32 +26,25 @@ class AssistantState(TypedDict, total=False):
     include_agents: list[str] | None
     llm_client: LLMClient
     db_factory: Callable[[], Any]
+    mcp_client: Any  # MCPClient for portfolio tools
     selected_agents: list[BaseAgent]
     agent_outputs: list[AgentOutput]
     response: str
 
 
 class AssistantWorkflow:
-    """Route, execute relevant specialists, and synthesize only when needed."""
+    """Route, execute relevant specialists, and synthesize results."""
 
-    def __init__(self, agent_router: AgentRouter) -> None:
+    def __init__(self, agent_router: AgentRouter, mcp_client: Any = None) -> None:
         self.agent_router = agent_router
+        self.mcp_client = mcp_client
         graph = StateGraph(AssistantState)
         graph.add_node("route", self._route)
         graph.add_node("execute", self._execute)
-        graph.add_node("direct_portfolio", self._answer_portfolio_lookup)
         graph.add_node("synthesize", self._synthesize)
         graph.add_edge(START, "route")
         graph.add_edge("route", "execute")
-        graph.add_conditional_edges(
-            "execute",
-            self._needs_synthesis,
-            {
-                "direct_portfolio": "direct_portfolio",
-                "synthesize": "synthesize",
-            },
-        )
-        graph.add_edge("direct_portfolio", END)
+        graph.add_edge("execute", "synthesize")
         graph.add_edge("synthesize", END)
         self.graph = graph.compile()
 
@@ -61,6 +54,7 @@ class AssistantWorkflow:
         user_message: str,
         llm_client: LLMClient,
         db_factory: Callable[[], Any],
+        mcp_client: Any = None,
         include_agents: list[str] | None = None,
     ) -> AssistantState:
         return await self.graph.ainvoke(
@@ -68,12 +62,14 @@ class AssistantWorkflow:
                 "user_message": user_message,
                 "llm_client": llm_client,
                 "db_factory": db_factory,
+                "mcp_client": mcp_client or self.mcp_client,
                 "include_agents": include_agents,
             }
         )
 
     async def _route(self, state: AssistantState) -> dict[str, Any]:
         requested = state.get("include_agents")
+
         if requested is not None:
             unknown = [name for name in requested if name not in self.agent_router.agents]
             if unknown:
@@ -100,6 +96,7 @@ class AssistantWorkflow:
                 metadata={
                     "db_factory": state["db_factory"],
                     "llm_client": state["llm_client"],
+                    "mcp_client": state.get("mcp_client"),
                 },
             ),
         )
@@ -114,88 +111,6 @@ class AssistantWorkflow:
             )
         return {"agent_outputs": outputs}
 
-    @staticmethod
-    def _needs_synthesis(state: AssistantState) -> str:
-        selected = state["selected_agents"]
-        if len(selected) == 1 and selected[0].name == "portfolio":
-            return "direct_portfolio"
-        return "synthesize"
-
-    @staticmethod
-    def _answer_portfolio_lookup(state: AssistantState) -> dict[str, str]:
-        portfolio = next(
-            (
-                output
-                for output in state["agent_outputs"]
-                if output.agent_name == "portfolio" and output.success
-            ),
-            None,
-        )
-        if portfolio is None:
-            raise AssistantWorkflowError(
-                "Portfolio data could not be retrieved for this question."
-            )
-
-        data = portfolio.data
-        holdings = data.get("holdings", [])
-        if not holdings:
-            return {"response": "No holdings are currently stored in your portfolio."}
-
-        lines = [f"Your stored portfolio has {len(holdings)} holdings:"]
-        for holding in holdings:
-            symbol = holding.get("symbol", "Unknown asset")
-            quantity = AssistantWorkflow._format_quantity(holding.get("quantity"))
-            lines.append(f"- {symbol}: {quantity} units")
-
-        summary = data.get("portfolio_summary", {})
-        total_value = summary.get("total_value")
-        currency = summary.get("currency")
-        valuation_status = summary.get("valuation_status")
-        if total_value is not None and currency:
-            amount = Decimal(str(total_value))
-            label = (
-                "Partial stored value"
-                if valuation_status == "partial"
-                else "Total stored value"
-            )
-            lines.append(f"{label}: {currency} {amount:,.2f}.")
-        if valuation_status == "partial":
-            unpriced = summary.get("unpriced_holdings", [])
-            if unpriced:
-                lines.append(
-                    "No usable stored price for: " + ", ".join(unpriced) + "."
-                )
-            else:
-                lines.append("Some holdings have no usable stored price.")
-        elif valuation_status == "mixed_currency":
-            lines.append("A combined total is unavailable because currencies differ.")
-
-        price_observations = sorted(
-            {
-                (holding.get("price_source"), (holding.get("price_date") or "")[:10])
-                for holding in holdings
-                if holding.get("price_source")
-            }
-        )
-        for source, observed_date in price_observations:
-            observation = (
-                f" (observed {observed_date})" if observed_date else ""
-            )
-            if source == "virtual_broker":
-                lines.append(
-                    f"Virtual broker prices are sample data, not live quotes"
-                    f"{observation}."
-                )
-            else:
-                lines.append(f"Price source: {source}{observation}.")
-        return {"response": "\n".join(lines)}
-
-    @staticmethod
-    def _format_quantity(value: Any) -> str:
-        if value is None:
-            return "unknown quantity"
-        quantity = Decimal(str(value))
-        return format(quantity.normalize(), "f")
 
     @staticmethod
     async def _synthesize(state: AssistantState) -> dict[str, Any]:
