@@ -34,10 +34,7 @@ from app.agents import (
     MarketResearchAgent,
     RiskManagerAgent,
 )
-from app.agents.portfolio_agent import PortfolioAgent
-from app.agents.valuation_agent import ValuationAgent
-from app.agents.research_agent import ResearchAgent
-from app.orchestrator.orchestrator import Orchestrator
+from app.agents.main_agent import create_main_agent, run_main_agent
 from app.llm.client import LLMClient
 from app.mcp.portfolio_server import PortfolioToolsService
 from app.llm.context_builder import ContextBuilder
@@ -61,18 +58,8 @@ db_factory = get_session_factory()
 tools_service = PortfolioToolsService(db_factory)
 mcp_client = tools_service.get_client()
 
-# Initialize agents for orchestrator
-agents = {
-    "portfolio": PortfolioAgent(),
-    "research": ResearchAgent(),
-    "market_research": MarketResearchAgent(),
-    "macro": MacroContextAgent(),
-    "risk": RiskManagerAgent(),
-    "valuation": ValuationAgent(),
-}
-
-# Initialize LangGraph orchestrator
-orchestrator = Orchestrator(agents)
+# Note: Main Agent is created on-demand in chat_message endpoint
+# It uses LangChain subagents pattern (Portfolio, Research, etc.)
 
 # Initialize LLM client based on config
 llm_client = None
@@ -500,30 +487,30 @@ async def chat_message(chat_msg: ChatMessage):
         logger.info(f"[CHAT] Conversation ID: {conversation_id}")
 
         try:
-            orchestrator_state = await orchestrator.ainvoke(
-                user_query=chat_msg.message,
-                llm_client=llm_client,
-                db_factory=get_session_factory(),
-                mcp_client=mcp_client,
-            )
+            # Run Main Agent with LangChain subagents pattern
+            result = await run_main_agent(llm_client, chat_msg.message)
         except Exception as exc:
-            logger.error("Orchestrator failed: %s", exc, exc_info=True)
+            logger.error("Main Agent failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail="The orchestrator failed to process your query. Check server logs and retry.",
+                detail="The agent failed to process your query. Check server logs and retry.",
             ) from exc
 
-        agent_outputs = orchestrator_state.get("agent_outputs", [])
-        response_text = orchestrator_state.get("response", "")
-        context_dict = ContextBuilder.build_context(agent_outputs)
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error", "Unknown error"),
+            )
+
+        response_text = result.get("response", "")
 
         # Return response
         return ChatResponse(
             response=response_text,
             conversation_id=conversation_id,
-            analysis=context_dict,
+            analysis={},  # TODO: Add findings from subagents
             timestamp=datetime.utcnow(),
-            agents_used=[a.agent_name for a in agent_outputs if hasattr(a, 'agent_name')]
+            agents_used=["portfolio", "research"]  # TODO: Determine from actual agents used
         )
 
     except HTTPException:

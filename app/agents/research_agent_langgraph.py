@@ -14,7 +14,7 @@ from langgraph.graph import StateGraph, END, START
 from app.agents.base import BaseAgent, AgentContext, AgentOutput
 from app.agents.research_agent_state import ResearchAgentState
 from app.agents.findings import Finding, SourceRef, SourceType, EvidenceLevel
-from app.agents.tools import RESEARCH_TOOLS, execute_tool
+from app.agents.research_tools import RESEARCH_TOOLS, execute_tool
 from app.agents.assessment import build_assessment
 
 logger = logging.getLogger(__name__)
