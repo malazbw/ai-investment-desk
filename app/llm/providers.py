@@ -149,6 +149,78 @@ class OllamaProvider(LLMProvider):
             self.logger.error(f"Ollama API error: {e}")
             raise
 
+    async def generate_with_tools(
+        self,
+        user_message: str,
+        system_prompt: str,
+        tools: list,
+    ) -> Dict[str, Any]:
+        """
+        Call Ollama to decide which tool to use.
+
+        Returns:
+            Dict with tool_name and tool_args
+        """
+        # Format tools for LLM
+        tools_text = self._format_tools(tools)
+
+        full_prompt = f"""{system_prompt}
+
+Available Tools:
+{tools_text}
+
+User Query: {user_message}
+
+Respond with a JSON object in this format:
+{{"tool_name": "tool_name", "tool_args": {{"arg1": "value1", "arg2": "value2"}}}}
+"""
+
+        self.logger.info(f"Calling Ollama for tool decision with model {self.model}")
+
+        try:
+            response = await self.client.post(
+                f"{self.api_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,  # Lower temperature for tool selection
+                        "top_p": 0.9,
+                        "top_k": 40,
+                    }
+                },
+            )
+
+            if response.status_code != 200:
+                raise Exception(f"Ollama error: {response.text}")
+
+            result = response.json()
+            generated_text = result.get("response", "").strip()
+
+            # Parse JSON response
+            import json
+            try:
+                decision = json.loads(generated_text)
+                self.logger.info(f"Tool decision: {decision.get('tool_name')}")
+                return decision
+            except json.JSONDecodeError:
+                self.logger.error(f"Failed to parse tool decision JSON: {generated_text}")
+                raise Exception(f"Invalid JSON response from Ollama: {generated_text}")
+
+        except Exception as e:
+            self.logger.error(f"Ollama tool decision error: {e}")
+            raise
+
+    def _format_tools(self, tools: list) -> str:
+        """Format tools for LLM presentation"""
+        lines = []
+        for tool in tools:
+            lines.append(f"\nTool: {tool['name']}")
+            lines.append(f"Description: {tool['description']}")
+            lines.append(f"Parameters: {tool['input_schema']}")
+        return "\n".join(lines)
+
     def _format_context(self, context: Dict[str, Any]) -> str:
         """Format agent outputs into readable context"""
         lines = []
