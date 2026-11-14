@@ -26,14 +26,20 @@ async def run_main_agent(llm_model: Any, user_query: str) -> dict[str, Any]:
     Returns:
         Agent response with answer
     """
-    logger.info(f"[main_agent] Processing query: {user_query}")
+    logger.info("\n" + "="*80)
+    logger.info("[MAIN_AGENT] ✓ STARTED")
+    logger.info(f"[MAIN_AGENT] Query: {user_query}")
+    logger.info("="*80)
 
     try:
         # Create tools (subagents)
+        logger.info("[MAIN_AGENT] Creating portfolio subagent tool...")
         portfolio_tool = create_portfolio_subagent_tool(llm_model)
+        logger.info("[MAIN_AGENT] ✓ Portfolio subagent tool created")
 
         # Tools available to main agent
         tools = [portfolio_tool]
+        logger.info(f"[MAIN_AGENT] Tools available: {len(tools)}")
 
         # System prompt for main agent
         system_prompt = """You are an investment advisor AI assistant.
@@ -45,18 +51,21 @@ When asked portfolio questions, use the portfolio_subagent tool.
 Synthesize the results into a clear, helpful response."""
 
         # Create agent using LangChain
+        logger.info("[MAIN_AGENT] Creating LangChain agent with create_agent()...")
         agent = create_agent(
             model=llm_model,
             tools=tools,
             system_prompt=system_prompt,
         )
-
-        logger.info("[main_agent] Created agent, invoking with query")
+        logger.info("[MAIN_AGENT] ✓ Agent created successfully")
 
         # Run agent - create_agent returns a CompiledStateGraph
-        result = await agent.ainvoke({"input": user_query})
+        logger.info("[MAIN_AGENT] Invoking agent with query...")
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_query}]})
+        logger.info("[MAIN_AGENT] ✓ Agent execution completed")
 
-        logger.info("[main_agent] Agent execution completed")
+        logger.info("[MAIN_AGENT] ✓ SUCCESS")
+        logger.info("="*80)
 
         return {
             "success": True,
@@ -64,7 +73,8 @@ Synthesize the results into a clear, helpful response."""
         }
 
     except Exception as e:
-        logger.error(f"[main_agent] Error: {e}", exc_info=True)
+        logger.error(f"[MAIN_AGENT] ✗ ERROR: {e}", exc_info=True)
+        logger.error("="*80)
         return {
             "success": False,
             "error": str(e),

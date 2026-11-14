@@ -27,7 +27,7 @@ def get_portfolio_summary() -> str:
     Returns:
         Portfolio overview as a formatted string
     """
-    logger.info("[portfolio_subagent] Getting portfolio summary")
+    logger.info("[PORTFOLIO_TOOL] ✓ get_portfolio_summary() CALLED")
 
     portfolio_data = {
         "total_value": 150000,
@@ -204,7 +204,9 @@ def create_portfolio_subagent_tool(llm_model: Any):
     """
 
     # Create the portfolio subagent
+    logger.info("[PORTFOLIO_TOOL] Creating portfolio agent...")
     portfolio_agent = create_portfolio_subagent(llm_model)
+    logger.info("[PORTFOLIO_TOOL] ✓ Portfolio agent created")
 
     @tool
     async def portfolio_subagent(query: str) -> str:
@@ -224,13 +226,22 @@ def create_portfolio_subagent_tool(llm_model: Any):
         Returns:
             Portfolio analysis
         """
-        logger.info(f"[portfolio_subagent] Processing query: {query}")
+        logger.info("\n" + "-"*80)
+        logger.info("[PORTFOLIO_AGENT] ✓ CALLED BY MAIN AGENT")
+        logger.info(f"[PORTFOLIO_AGENT] Query: {query}")
+        logger.info("-"*80)
 
         try:
+            logger.info("[PORTFOLIO_AGENT] Invoking portfolio agent...")
             result = await portfolio_agent.ainvoke({"input": query})
-            return result.get("output", str(result))
+            logger.info("[PORTFOLIO_AGENT] ✓ Portfolio agent completed")
+            output = result.get("output", str(result))
+            logger.info(f"[PORTFOLIO_AGENT] Output: {output[:100]}...")
+            logger.info("-"*80)
+            return output
         except Exception as e:
-            logger.error(f"[portfolio_subagent] Error: {e}", exc_info=True)
+            logger.error(f"[PORTFOLIO_AGENT] ✗ ERROR: {e}", exc_info=True)
+            logger.error("-"*80)
             return f"Error processing portfolio query: {str(e)}"
 
     return portfolio_subagent
