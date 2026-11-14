@@ -5,11 +5,16 @@ https://docs.langchain.com/oss/python/langchain/multi-agent/subagents
 A subagent that handles all portfolio-related queries.
 It has its own tools and agent executor, runs independently.
 Can be called by Main Agent as a tool.
+
+Note: Uses Claude API (not Gemini) for stable nested agent LLM support.
 """
 import logging
 from typing import Any
+import os
 
 from langchain.agents import create_agent
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
@@ -150,7 +155,7 @@ def create_portfolio_subagent(llm_model: Any):
     - Can be called by Main Agent as a tool
 
     Args:
-        llm_model: LangChain chat model
+        llm_model: LangChain chat model (Gemini)
 
     Returns:
         Agent (CompiledStateGraph)
@@ -233,9 +238,19 @@ def create_portfolio_subagent_tool(llm_model: Any):
 
         try:
             logger.info("[PORTFOLIO_AGENT] Invoking portfolio agent...")
-            result = await portfolio_agent.ainvoke({"input": query})
+            # FIX 1: Pass "messages" with a HumanMessage instead of "input"
+            result = await portfolio_agent.ainvoke({
+                "messages": [HumanMessage(content=query)]
+            })
             logger.info("[PORTFOLIO_AGENT] ✓ Portfolio agent completed")
-            output = result.get("output", str(result))
+            
+            # FIX 2: Extract content from the last message in the state
+            output = (
+                result["messages"][-1].content
+                if "messages" in result and result["messages"]
+                else str(result)
+            )
+            
             logger.info(f"[PORTFOLIO_AGENT] Output: {output[:100]}...")
             logger.info("-"*80)
             return output

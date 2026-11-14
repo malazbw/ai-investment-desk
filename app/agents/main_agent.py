@@ -11,6 +11,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from app.agents.portfolio_subagent import create_portfolio_subagent_tool
+from app.agents.research_subagent import create_research_subagent_tool
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,12 @@ async def run_main_agent(llm_model: Any, user_query: str) -> dict[str, Any]:
         portfolio_tool = create_portfolio_subagent_tool(llm_model)
         logger.info("[MAIN_AGENT] ✓ Portfolio subagent tool created")
 
+        logger.info("[MAIN_AGENT] Creating research subagent tool...")
+        research_tool = create_research_subagent_tool(llm_model)
+        logger.info("[MAIN_AGENT] ✓ Research subagent tool created")
+
         # Tools available to main agent
-        tools = [portfolio_tool]
+        tools = [portfolio_tool, research_tool]
         logger.info(f"[MAIN_AGENT] Tools available: {len(tools)}")
 
         # System prompt for main agent
@@ -46,8 +51,13 @@ async def run_main_agent(llm_model: Any, user_query: str) -> dict[str, Any]:
 
 You have access to specialist tools:
 - portfolio_subagent: Answer questions about the user's portfolio (holdings, allocation, concentration, P&L)
+- research_subagent: Answer questions about company valuation metrics (P/E, EPS, dividend, market cap, 52-week range)
 
-When asked portfolio questions, use the portfolio_subagent tool.
+Route queries intelligently to the appropriate subagent(s) based on user intent:
+- If asking about "my portfolio", "my holdings", "my allocation" → use portfolio_subagent
+- If asking about "valuation", "P/E ratio", "earnings", "dividend", "market cap" for specific stocks → use research_subagent
+- If asking about multiple topics → use both subagents and synthesize results
+
 Synthesize the results into a clear, helpful response."""
 
         # Create agent using LangChain

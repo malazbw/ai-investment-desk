@@ -28,12 +28,6 @@ from app.services import (
 from app.brokers import VirtualBroker
 from app.brokers.etoro import EtoroMarketDataClient
 from app.config import settings
-from app.agents import (
-    AgentRouter,
-    MacroContextAgent,
-    MarketResearchAgent,
-    RiskManagerAgent,
-)
 from app.agents.main_agent import run_main_agent
 from app.llm.client import LLMClient
 from app.mcp.portfolio_server import PortfolioToolsService
