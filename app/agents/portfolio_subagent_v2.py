@@ -1,17 +1,14 @@
 """
 Portfolio Subagent following LangChain subagents pattern.
-https://docs.langchain.com/oss/python/langchain/multi-agent/subagents
-
 A subagent that handles all portfolio-related queries.
 It has its own tools and agent executor, runs independently.
 Can be called by Main Agent as a tool.
 """
 import logging
-from typing import Any, Callable
+from typing import Any
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.tools import tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 logger = logging.getLogger(__name__)
 
@@ -142,20 +139,20 @@ def get_concentration_analysis() -> str:
 # PORTFOLIO SUBAGENT
 # ============================================================================
 
-def create_portfolio_subagent(llm_client: Any):
+def create_portfolio_subagent(llm_model: Any):
     """
-    Create Portfolio Subagent with its own tools and executor.
+    Create Portfolio Subagent with its own tools.
 
     This subagent:
     - Has access to portfolio-specific tools
-    - Runs independently with its own agent executor
+    - Runs independently
     - Can be called by Main Agent as a tool
 
     Args:
-        llm_client: LLM client (Ollama, Claude, etc.)
+        llm_model: LangChain chat model
 
     Returns:
-        AgentExecutor for portfolio subagent
+        Agent for portfolio subagent
     """
     logger.info("[portfolio_subagent] Creating Portfolio Subagent")
 
@@ -168,10 +165,7 @@ def create_portfolio_subagent(llm_client: Any):
     ]
 
     # Define system prompt for this subagent
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """You are a portfolio analysis specialist.
+    system_prompt = """You are a portfolio analysis specialist.
 
 You have access to tools that provide information about the user's portfolio:
 - get_portfolio_summary: Overall portfolio metrics
@@ -181,46 +175,38 @@ You have access to tools that provide information about the user's portfolio:
 
 When asked about portfolio-related topics, use the appropriate tools to gather information and provide a clear, structured analysis.
 Focus on providing insights about allocation, concentration, and risk."""
-        ),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
 
-    # Create tool-calling agent
-    agent = create_tool_calling_agent(llm_client, tools, prompt)
-
-    # Create agent executor
-    agent_executor = AgentExecutor(
-        agent=agent,
+    # Create agent using LangChain
+    agent = create_agent(
+        model=llm_model,
         tools=tools,
-        verbose=True,
-        max_iterations=10,
-        handle_parsing_errors=True,
+        system_prompt=system_prompt,
     )
 
-    return agent_executor
+    return agent
 
 
 # ============================================================================
 # WRAPPER TOOL FOR MAIN AGENT
 # ============================================================================
 
-def create_portfolio_subagent_tool(llm_client: Any):
+def create_portfolio_subagent_tool(llm_model: Any):
     """
     Create a tool that wraps the Portfolio Subagent.
     This tool will be available to the Main Agent.
 
     Args:
-        llm_client: LLM client
+        llm_model: LangChain chat model
 
     Returns:
         Tool that calls portfolio subagent
     """
 
     # Create the portfolio subagent
-    portfolio_executor = create_portfolio_subagent(llm_client)
+    portfolio_agent = create_portfolio_subagent(llm_model)
 
     @tool
-    def portfolio_subagent(query: str) -> str:
+    async def portfolio_subagent(query: str) -> str:
         """
         Portfolio Subagent - Handles questions about user's portfolio.
 
@@ -240,10 +226,10 @@ def create_portfolio_subagent_tool(llm_client: Any):
         logger.info(f"[portfolio_subagent] Processing query: {query}")
 
         try:
-            result = portfolio_executor.invoke({"input": query})
-            return result.get("output", "No response generated")
+            result = await portfolio_agent.ainvoke({"input": query})
+            return result.get("output", str(result))
         except Exception as e:
-            logger.error(f"[portfolio_subagent] Error: {e}")
+            logger.error(f"[portfolio_subagent] Error: {e}", exc_info=True)
             return f"Error processing portfolio query: {str(e)}"
 
     return portfolio_subagent

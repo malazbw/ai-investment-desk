@@ -20,6 +20,18 @@ class LLMClient:
         """
         self.provider = provider
         self.logger = logger
+        self._langchain_model = None
+
+    def get_langchain_model(self):
+        """
+        Get LangChain-compatible chat model for use with LangChain agents.
+
+        Returns:
+            LangChain BaseChatModel instance
+        """
+        if self._langchain_model is None:
+            self._langchain_model = self.provider.get_langchain_model()
+        return self._langchain_model
 
     async def analyze(
         self,

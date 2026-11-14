@@ -34,7 +34,7 @@ from app.agents import (
     MarketResearchAgent,
     RiskManagerAgent,
 )
-from app.agents.main_agent import create_main_agent, run_main_agent
+from app.agents.main_agent import run_main_agent
 from app.llm.client import LLMClient
 from app.mcp.portfolio_server import PortfolioToolsService
 from app.llm.context_builder import ContextBuilder
@@ -487,8 +487,11 @@ async def chat_message(chat_msg: ChatMessage):
         logger.info(f"[CHAT] Conversation ID: {conversation_id}")
 
         try:
+            # Get LangChain model for agents from provider
+            llm_model = llm_client.provider.get_langchain_model()
+
             # Run Main Agent with LangChain subagents pattern
-            result = await run_main_agent(llm_client, chat_msg.message)
+            result = await run_main_agent(llm_model, chat_msg.message)
         except Exception as exc:
             logger.error("Main Agent failed: %s", exc, exc_info=True)
             raise HTTPException(

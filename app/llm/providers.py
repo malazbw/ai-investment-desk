@@ -22,6 +22,11 @@ class LLMProvider(ABC):
         """Send message to LLM and get response"""
         pass
 
+    @abstractmethod
+    def get_langchain_model(self):
+        """Get LangChain-compatible chat model for agents"""
+        pass
+
 
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude API provider"""
@@ -34,11 +39,15 @@ class ClaudeProvider(LLMProvider):
             api_key: Anthropic API key
             model: Claude model to use
         """
-        import anthropic
+        from langchain_anthropic import ChatAnthropic
 
-        self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
         self.logger = logger
+        self.llm = ChatAnthropic(
+            model=model,
+            api_key=api_key,
+            temperature=0.7,
+        )
 
     async def analyze(
         self,
@@ -53,25 +62,23 @@ class ClaudeProvider(LLMProvider):
         self.logger.info(f"Calling Claude with model {self.model}")
 
         try:
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": full_user_message,
-                    }
-                ],
-            )
-
-            response = message.content[0].text
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=full_user_message),
+            ]
+            response = await self.llm.ainvoke(messages)
+            result = response.content
             self.logger.info("Claude response received")
-            return response
+            return result
 
         except Exception as e:
             self.logger.error(f"Claude API error: {e}")
             raise
+
+    def get_langchain_model(self):
+        """Get LangChain-compatible chat model"""
+        return self.llm
 
     def _format_context(self, context: Dict[str, Any]) -> str:
         """Format agent outputs into readable context"""
@@ -99,12 +106,16 @@ class OllamaProvider(LLMProvider):
             api_url: Ollama API endpoint (default: localhost)
             model: Model to use (e.g., 'mistral', 'llama2', 'neural-chat')
         """
-        import httpx
+        from langchain_ollama import OllamaLLM
 
         self.api_url = api_url.rstrip("/")
         self.model = model
-        self.client = httpx.AsyncClient(timeout=300.0)  # Long timeout for inference
         self.logger = logger
+        self.llm = OllamaLLM(
+            base_url=self.api_url,
+            model=model,
+            temperature=0.7,
+        )
 
     async def analyze(
         self,
@@ -116,38 +127,26 @@ class OllamaProvider(LLMProvider):
         context_text = self._format_context(context)
         full_user_message = f"{context_text}\n\nUser Question: {user_message}"
 
-        # Build prompt with system instruction
-        full_prompt = f"{system_prompt}\n\n{full_user_message}"
-
         self.logger.info(f"Calling Ollama with model {self.model}")
 
         try:
-            response = await self.client.post(
-                f"{self.api_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": full_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "top_k": 40,
-                    }
-                },
-            )
-
-            if response.status_code != 200:
-                raise Exception(f"Ollama error: {response.text}")
-
-            result = response.json()
-            generated_text = result.get("response", "").strip()
-
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=full_user_message),
+            ]
+            response = await self.llm.ainvoke(messages)
+            result = response
             self.logger.info("Ollama response received")
-            return generated_text
+            return result
 
         except Exception as e:
             self.logger.error(f"Ollama API error: {e}")
             raise
+
+    def get_langchain_model(self):
+        """Get LangChain-compatible chat model"""
+        return self.llm
 
     async def generate_with_tools(
         self,
@@ -239,8 +238,6 @@ Respond with a JSON object in this format:
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider (free, powerful)"""
 
-    API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-
     def __init__(self, api_key: str, model: str = "gemini-3.5-flash-lite"):
         """
         Initialize Gemini provider
@@ -249,12 +246,18 @@ class GeminiProvider(LLMProvider):
             api_key: Google API key from makersuite.google.com
             model: Gemini model to use
         """
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
         if not api_key:
             raise ValueError("A Gemini API key is required")
         self.api_key = api_key
         self.model = model
-        self.client = httpx.AsyncClient(timeout=60.0)
         self.logger = logger
+        self.llm = ChatGoogleGenerativeAI(
+            model=model,
+            api_key=api_key,
+            temperature=0.7,
+        )
 
     async def analyze(
         self,
@@ -262,50 +265,30 @@ class GeminiProvider(LLMProvider):
         system_prompt: str,
         context: Dict[str, Any],
     ) -> str:
-        """Call Gemini's generateContent API asynchronously."""
+        """Call Gemini API"""
         context_text = self._format_context(context)
         full_user_message = f"{context_text}\n\nUser Question: {user_message}"
 
-        response = await self.client.post(
-            f"{self.API_BASE_URL}/models/{self.model}:generateContent",
-            headers={"x-goog-api-key": self.api_key},
-            json={
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": full_user_message}],
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 2048,
-                },
-            },
-        )
-        response.raise_for_status()
+        self.logger.info(f"Calling Gemini with model {self.model}")
+
         try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError("Gemini returned invalid JSON") from exc
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=full_user_message),
+            ]
+            response = await self.llm.ainvoke(messages)
+            result = response.content
+            self.logger.info("Gemini response received")
+            return result
 
-        candidates = payload.get("candidates")
-        if not isinstance(candidates, list) or not candidates:
-            raise RuntimeError("Gemini returned no response candidates")
-        candidate = candidates[0]
-        if candidate.get("finishReason") == "MAX_TOKENS":
-            raise RuntimeError("Gemini response exceeded the output token limit")
+        except Exception as e:
+            self.logger.error(f"Gemini API error: {e}")
+            raise
 
-        parts = candidate.get("content", {}).get("parts", [])
-        text = "".join(
-            part["text"]
-            for part in parts
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
-        ).strip()
-        if not text:
-            raise RuntimeError("Gemini returned an empty response")
-        self.logger.info("Gemini response received")
-        return text
+    def get_langchain_model(self):
+        """Get LangChain-compatible chat model"""
+        return self.llm
 
     def _format_context(self, context: Dict[str, Any]) -> str:
         """Format agent outputs into readable context"""
