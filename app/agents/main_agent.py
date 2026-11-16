@@ -47,6 +47,7 @@ def create_main_agent(llm_model: Any):
         model=llm_model,
         tools=[portfolio_tool],
         system_prompt="You are an investment assistant. Give clear answers based on the information available to you.",
+        name="Main Investment Assistant",
     )
 
 
