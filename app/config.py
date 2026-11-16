@@ -4,6 +4,9 @@ Application configuration
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -43,6 +46,12 @@ class Settings(BaseSettings):
     ollama_api_url: str = "http://localhost:11434"
     ollama_model: str = "mistral"  # or "neural-chat", "llama2", etc
 
+    # Optional LangSmith tracing for nested LangChain agent runs
+    langsmith_tracing: bool = False
+    langsmith_api_key: str = ""
+    langsmith_project: str = "ai-investment-desk"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
     # LLM (future)
     openai_api_key: str = ""
 
@@ -66,3 +75,14 @@ def get_settings():
 
 
 settings = get_settings()
+
+# LangChain reads tracing configuration from process environment variables.
+# Pydantic loads .env values into Settings but does not export them to os.environ.
+if settings.langsmith_tracing and settings.langsmith_api_key:
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
+elif settings.langsmith_tracing:
+    logger.warning("LangSmith tracing requested but LANGSMITH_API_KEY is missing; tracing disabled")
+    os.environ["LANGSMITH_TRACING"] = "false"
