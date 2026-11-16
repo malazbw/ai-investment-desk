@@ -2,8 +2,10 @@
 # Import from old services.py (temporary compatibility)
 import sys
 import importlib.util
+from pathlib import Path
 
-spec = importlib.util.spec_from_file_location("_services", "/Users/hala.al.kuwatly/projects/ai-investment-desk/app/services.py")
+_legacy_services_path = Path(__file__).resolve().parent.parent / "services.py"
+spec = importlib.util.spec_from_file_location("_services", _legacy_services_path)
 _services_module = importlib.util.module_from_spec(spec)
 sys.modules['_services'] = _services_module
 spec.loader.exec_module(_services_module)
