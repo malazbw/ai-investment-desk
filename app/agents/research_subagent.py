@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
@@ -298,9 +299,25 @@ def create_research_subagent_tool(llm_model: Any):
 
         try:
             logger.info("[RESEARCH_AGENT] Invoking research agent...")
-            result = await research_agent.ainvoke({"input": query})
+            result = await research_agent.ainvoke({
+                "messages": [HumanMessage(content=query)]
+            })
             logger.info("[RESEARCH_AGENT] ✓ Research agent completed")
-            output = result.get("output", str(result))
+            messages = result.get("messages", [])
+            if not messages:
+                return "The research agent returned no response."
+
+            content = messages[-1].content
+            if isinstance(content, str):
+                output = content
+            elif isinstance(content, list):
+                output = "".join(
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            else:
+                output = str(content)
             logger.info(f"[RESEARCH_AGENT] Output: {output[:100]}...")
             logger.info("-"*80)
             return output
