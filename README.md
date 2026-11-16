@@ -119,6 +119,24 @@ your local server or model differs from the defaults. For hosted providers,
 configure `GEMINI_API_KEY` or `CLAUDE_API_KEY`. Optional data-source settings
 are listed above.
 
+## Agent tracing (optional)
+
+LangSmith tracing is disabled by default. To trace the main agent, its portfolio
+subagent, and their model and tool calls, add these settings to `.env` and
+restart the server:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your_langsmith_api_key
+LANGSMITH_PROJECT=ai-investment-desk
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+Runs will appear in the configured LangSmith project. Traces can contain user
+questions, prompts, holdings, tool inputs, and tool results; enable tracing only
+if you are comfortable sending that data to the configured LangSmith endpoint.
+See the [LangChain observability guide](https://docs.langchain.com/oss/python/langchain/observability).
+
 ## Useful API endpoints
 
 | Purpose | Endpoint |
