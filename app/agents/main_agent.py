@@ -6,6 +6,7 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 
 from app.agents.portfolio_subagent import create_portfolio_subagent
+from app.agents.research_subagent import create_research_subagent_tool
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,12 @@ def create_portfolio_subagent_tool(llm_model: Any):
 
 
 def create_main_agent(llm_model: Any):
-    """Create the main agent with the portfolio specialist as its only tool."""
+    """Create the main agent with portfolio and Tier 1 research specialists."""
     portfolio_tool = create_portfolio_subagent_tool(llm_model)
+    research_tool = create_research_subagent_tool(llm_model)
     return create_agent(
         model=llm_model,
-        tools=[portfolio_tool],
+        tools=[portfolio_tool, research_tool],
         system_prompt="You are an investment assistant. Give clear answers based on the information available to you.",
         name="Main Investment Assistant",
     )
