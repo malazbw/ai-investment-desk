@@ -1,25 +1,22 @@
 # Agent Architecture
 
-This document describes the currently implemented main and portfolio agents. Use it as context when changing, debugging, or extending the agent flow.
+This document describes the currently implemented main, portfolio, and Tier 1 research agents. Use it as context when changing, debugging, or extending the agent flow.
 
 ## Overview
 
-The application has a two-agent flow for portfolio questions:
+The main agent can delegate portfolio questions and Tier 1 company research to separate specialist agents:
 
 ```text
 User query
     |
     v
 Main Investment Assistant (LangChain create_agent / LangGraph)
-    |  tool: portfolio_subagent
-    v
-Portfolio agent (LangChain create_agent / LangGraph)
-    |  tool: get_holdings
-    v
-SQLAlchemy database -> Holding rows and related Asset fields
+    |-- tool: portfolio_subagent -> Portfolio agent -> get_holdings -> SQLAlchemy database
+    |
+    `-- tool: research_subagent -> Tier 1 Research Agent -> get_tier1_fundamentals -> YahooFinanceService
 ```
 
-The main agent is the orchestrator. It has one tool, `portfolio_subagent`, which invokes the portfolio agent. The portfolio agent has one tool, `get_holdings`, which reads from the application database. The research agent is not registered as a tool in this main-agent flow.
+The main agent is the orchestrator. It has two tools: `portfolio_subagent` and `research_subagent`. The portfolio agent reads holdings from the application database. The research agent retrieves Tier 1 fundamentals through the existing Yahoo Finance service. Tier 2 news/events and Tier 3 filing search/transcript analysis are not part of this research agent.
 
 ## Components
 
@@ -27,7 +24,7 @@ The main agent is the orchestrator. It has one tool, `portfolio_subagent`, which
 
 - `create_main_agent(llm_model)` creates the main LangChain agent.
 - Its LangSmith/LangGraph display name is `Main Investment Assistant`.
-- It receives one tool: `portfolio_subagent`.
+- It receives two tools: `portfolio_subagent` and `research_subagent`.
 - `run_main_agent(llm_model, user_query)` invokes it with a user message and returns either `{"success": True, "response": ...}` or `{"success": False, "error": ...}`.
 - The main agent uses the model passed in as `llm_model`; the module does not select a provider or model itself.
 
@@ -43,6 +40,15 @@ The main agent is the orchestrator. It has one tool, `portfolio_subagent`, which
 - `create_portfolio_subagent(llm_model)` creates a LangChain agent using the same injected model as the main agent.
 - It has one tool: `get_holdings`.
 - Its system prompt says to base answers on information returned by tools.
+
+### Tier 1 research agent — `app/agents/research_subagent.py`
+
+- `create_research_subagent(llm_model)` creates the Tier 1 company research agent.
+- Its display name is `Tier 1 Research Agent`; it receives the injected model and has one data tool: `get_tier1_fundamentals`.
+- `create_research_subagent_tool(llm_model)` wraps it as the main agent's `research_subagent` tool and returns the final response text.
+- The data tool calls `YahooFinanceService.get_fundamentals(ticker)` and returns only Tier 1 fields: trailing/forward P/E, market capitalization, EPS, dividend information, and current/52-week prices, along with source and fetch time. It does not use the old hard-coded sample dictionaries or expose the service's broader profitability and financial-health fields.
+- Missing data is returned by the service and should be described as unavailable; the agent should not invent values.
+- Its scope excludes Tier 2 news/events and Tier 3 SEC filing search/RAG and earnings transcript analysis.
 
 ### Database tool — `get_holdings`
 
@@ -66,7 +72,8 @@ The exact number of model calls depends on the request and the model's tool deci
 
 ## Testing and tracing references
 
-- `test/agents/test_main_agent.py` is a live Gemini test. It checks that the main agent called `portfolio_subagent`, that the tool returned content, and that the final answer contains the expected holding symbols.
+- `test/agents/test_main_agent.py` is a live Gemini test for portfolio routing. It checks that the main agent called `portfolio_subagent`, that the tool returned content, and that the final answer contains the expected holding symbols.
+- `test/agents/test_research_subagent.py` is a live Gemini test that asks for MSFT Tier 1 fundamentals, captures tool events, and checks that the main agent calls both `research_subagent` and `get_tier1_fundamentals`.
 - `app/config.py` contains the optional LangSmith tracing settings. The configured default project name is `ai-investment-desk`.
 - The agents receive their LLM as a function argument; tests construct the Gemini model and pass it into `create_main_agent`.
 
