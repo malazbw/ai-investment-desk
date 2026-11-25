@@ -18,7 +18,7 @@ def create_portfolio_subagent_tool(llm_model: Any):
         "portfolio_subagent",
         description="Answer a question using the user's stored portfolio holdings.",
     )
-    async def call_portfolio_subagent(query: str) -> str:
+    async def call_portfolio_subagent(query:str) -> str:
         result = await portfolio_agent.ainvoke({
             "messages": [{"role": "user", "content": query}]
         })

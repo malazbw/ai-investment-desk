@@ -13,6 +13,7 @@ Can be called by Main Agent as a tool.
 import logging
 from typing import Any
 
+import yfinance as yf
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
@@ -24,180 +25,102 @@ logger = logging.getLogger(__name__)
 # RESEARCH TOOLS - TIER 1 (VALUATION METRICS)
 # ============================================================================
 
-@tool
-def get_pe_ratio(ticker: str) -> str:
-    """
-    Get P/E (Price-to-Earnings) ratio for a stock.
-
-    Args:
-        ticker: Stock symbol (e.g., MSFT, AAPL)
-
-    Returns:
-        P/E ratio and valuation context
-    """
-    logger.info(f"[RESEARCH_TOOL] ✓ get_pe_ratio({ticker}) CALLED")
-
-    valuation_data = {
-        "MSFT": {"pe_ratio": 28.5, "status": "moderate", "industry_avg": 25.0},
-        "AAPL": {"pe_ratio": 31.2, "status": "elevated", "industry_avg": 25.0},
-        "NVDA": {"pe_ratio": 52.1, "status": "high", "industry_avg": 25.0},
-        "TSLA": {"pe_ratio": 45.3, "status": "high", "industry_avg": 15.0},
-    }
-
-    data = valuation_data.get(ticker, {"pe_ratio": None, "status": "unknown"})
-
-    if data["pe_ratio"]:
-        result = f"""
-P/E Ratio for {ticker}:
-- P/E Ratio: {data['pe_ratio']}
-- Status: {data['status'].capitalize()} vs industry
-- Industry Average: {data.get('industry_avg', 'N/A')}
-"""
+def _classify_market_cap(cap: float) -> str:
+    if cap >= 200_000_000_000:
+        return "mega-cap"
+    elif cap >= 10_000_000_000:
+        return "large-cap"
+    elif cap >= 2_000_000_000:
+        return "mid-cap"
+    elif cap >= 300_000_000:
+        return "small-cap"
     else:
-        result = f"P/E ratio data not available for {ticker}"
-
-    return result
+        return "micro-cap"
 
 
 @tool
-def get_eps(ticker: str) -> str:
+def get_valuation_metrics(ticker: str) -> str:
     """
-    Get EPS (Earnings Per Share) for a stock.
+    Get comprehensive valuation metrics for a stock (Tier 1 fundamental analysis).
+
+    Returns all key valuation metrics in one call:
+    - P/E ratios (trailing and forward)
+    - EPS (earnings per share)
+    - Dividend yield and payout info
+    - Market capitalization and classification
+    - 52-week price range
 
     Args:
-        ticker: Stock symbol (e.g., MSFT, AAPL)
+        ticker: Stock symbol (e.g., MSFT, AAPL, NVDA)
 
     Returns:
-        Current and trailing EPS
+        Comprehensive valuation analysis
     """
-    logger.info(f"[RESEARCH_TOOL] ✓ get_eps({ticker}) CALLED")
+    logger.info(f"[RESEARCH_TOOL] ✓ get_valuation_metrics({ticker}) CALLED")
 
-    eps_data = {
-        "MSFT": {"trailing_eps": 9.89, "forward_eps": 10.50, "growth": "6.2%"},
-        "AAPL": {"trailing_eps": 5.95, "forward_eps": 6.50, "growth": "9.2%"},
-        "NVDA": {"trailing_eps": 3.45, "forward_eps": 5.20, "growth": "50.7%"},
-        "TSLA": {"trailing_eps": 2.81, "forward_eps": 3.50, "growth": "24.6%"},
-    }
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
 
-    data = eps_data.get(ticker)
+        company_name = info.get("longName", ticker)
+        result = f"\n📊 Valuation Metrics for {company_name} ({ticker})\n"
+        result += "=" * 60 + "\n"
 
-    if data:
-        result = f"""
-EPS (Earnings Per Share) for {ticker}:
-- Trailing EPS: ${data['trailing_eps']}
-- Forward EPS: ${data['forward_eps']}
-- Growth Rate: {data['growth']}
-"""
-    else:
-        result = f"EPS data not available for {ticker}"
+        # P/E Ratios
+        trailing_pe = info.get("trailingPE")
+        forward_pe = info.get("forwardPE")
+        if trailing_pe or forward_pe:
+            result += "\n🔢 Valuation Ratios:\n"
+            result += f"  - Trailing P/E: {trailing_pe if trailing_pe else 'N/A'}\n"
+            result += f"  - Forward P/E: {forward_pe if forward_pe else 'N/A'}\n"
 
-    return result
+        # EPS
+        trailing_eps = info.get("trailingEps")
+        forward_eps = info.get("forwardEps")
+        if trailing_eps or forward_eps:
+            result += "\n💰 Earnings Per Share:\n"
+            result += f"  - Trailing EPS: ${trailing_eps if trailing_eps else 'N/A'}\n"
+            result += f"  - Forward EPS: ${forward_eps if forward_eps else 'N/A'}\n"
 
+        # Dividend
+        dividend_yield = info.get("dividendYield")
+        trailing_annual_dividend = info.get("trailingAnnualDividendRate")
+        payout_ratio = info.get("payoutRatio")
+        if dividend_yield is not None or trailing_annual_dividend:
+            result += "\n🎁 Dividend Information:\n"
+            yield_pct = (dividend_yield * 100) if dividend_yield else 0
+            result += f"  - Dividend Yield: {yield_pct:.2f}%\n"
+            result += f"  - Annual Dividend: ${trailing_annual_dividend if trailing_annual_dividend else 'N/A'}\n"
+            result += f"  - Payout Ratio: {(payout_ratio * 100) if payout_ratio else 'N/A'}%\n"
 
-@tool
-def get_dividend_yield(ticker: str) -> str:
-    """
-    Get dividend yield for a stock.
+        # Market Cap
+        market_cap = info.get("marketCap")
+        if market_cap:
+            market_cap_billions = market_cap / 1_000_000_000
+            classification = _classify_market_cap(market_cap)
+            result += "\n🏢 Market Capitalization:\n"
+            result += f"  - Market Cap: ${market_cap_billions:.2f}B USD\n"
+            result += f"  - Classification: {classification.capitalize()}\n"
 
-    Args:
-        ticker: Stock symbol (e.g., MSFT, AAPL)
+        # 52-Week Range
+        week_52_high = info.get("fiftyTwoWeekHigh")
+        week_52_low = info.get("fiftyTwoWeekLow")
+        current_price = info.get("currentPrice")
+        if week_52_high and week_52_low and current_price:
+            range_pct = ((current_price - week_52_low) / (week_52_high - week_52_low)) * 100 if (week_52_high - week_52_low) > 0 else 0
+            result += "\n📈 52-Week Price Range:\n"
+            result += f"  - Current Price: ${current_price:.2f}\n"
+            result += f"  - 52-Week High: ${week_52_high:.2f}\n"
+            result += f"  - 52-Week Low: ${week_52_low:.2f}\n"
+            result += f"  - Position: {range_pct:.1f}% from low\n"
 
-    Returns:
-        Dividend yield and payment info
-    """
-    logger.info(f"[RESEARCH_TOOL] ✓ get_dividend_yield({ticker}) CALLED")
+        if result.count("\n") <= 2:
+            return f"Valuation data not available for {ticker}"
 
-    dividend_data = {
-        "MSFT": {"yield": 0.72, "annual_dividend": 3.00, "payout_ratio": 25},
-        "AAPL": {"yield": 0.43, "annual_dividend": 2.52, "payout_ratio": 15},
-        "NVDA": {"yield": 0.03, "annual_dividend": 0.04, "payout_ratio": 1},
-        "TSLA": {"yield": 0.0, "annual_dividend": 0.0, "payout_ratio": 0},
-    }
-
-    data = dividend_data.get(ticker)
-
-    if data:
-        yield_info = f"Dividend Yield: {data['yield']}%" if data['yield'] > 0 else "No dividend"
-        result = f"""
-Dividend Information for {ticker}:
-- {yield_info}
-- Annual Dividend: ${data['annual_dividend']}
-- Payout Ratio: {data['payout_ratio']}%
-"""
-    else:
-        result = f"Dividend data not available for {ticker}"
-
-    return result
-
-
-@tool
-def get_market_cap(ticker: str) -> str:
-    """
-    Get market capitalization and size classification for a stock.
-
-    Args:
-        ticker: Stock symbol (e.g., MSFT, AAPL)
-
-    Returns:
-        Market cap and company size
-    """
-    logger.info(f"[RESEARCH_TOOL] ✓ get_market_cap({ticker}) CALLED")
-
-    market_cap_data = {
-        "MSFT": {"market_cap": 3200, "classification": "mega-cap", "currency": "USD (Billions)"},
-        "AAPL": {"market_cap": 3150, "classification": "mega-cap", "currency": "USD (Billions)"},
-        "NVDA": {"market_cap": 1850, "classification": "mega-cap", "currency": "USD (Billions)"},
-        "TSLA": {"market_cap": 950, "classification": "large-cap", "currency": "USD (Billions)"},
-    }
-
-    data = market_cap_data.get(ticker)
-
-    if data:
-        result = f"""
-Market Capitalization for {ticker}:
-- Market Cap: ${data['market_cap']} {data['currency']}
-- Classification: {data['classification'].capitalize()}
-"""
-    else:
-        result = f"Market cap data not available for {ticker}"
-
-    return result
-
-
-@tool
-def get_52_week_range(ticker: str) -> str:
-    """
-    Get 52-week high and low for a stock.
-
-    Args:
-        ticker: Stock symbol (e.g., MSFT, AAPL)
-
-    Returns:
-        52-week price range and proximity to highs/lows
-    """
-    logger.info(f"[RESEARCH_TOOL] ✓ get_52_week_range({ticker}) CALLED")
-
-    range_data = {
-        "MSFT": {"high": 425, "low": 295, "current": 420, "low_proximity": "92% from low"},
-        "AAPL": {"high": 245, "low": 170, "current": 235, "low_proximity": "88% from low"},
-        "NVDA": {"high": 1050, "low": 650, "current": 920, "low_proximity": "77% from low"},
-        "TSLA": {"high": 350, "low": 155, "current": 285, "low_proximity": "84% from low"},
-    }
-
-    data = range_data.get(ticker)
-
-    if data:
-        result = f"""
-52-Week Range for {ticker}:
-- 52-Week High: ${data['high']}
-- 52-Week Low: ${data['low']}
-- Current Price: ${data['current']}
-- Position: {data['low_proximity']}
-"""
-    else:
-        result = f"52-week range data not available for {ticker}"
-
-    return result
+        return result
+    except Exception as e:
+        logger.error(f"Error fetching valuation metrics for {ticker}: {e}")
+        return f"Valuation data not available for {ticker}"
 
 
 # ============================================================================
@@ -223,25 +146,21 @@ def create_research_subagent(llm_model: Any):
 
     # Define Tier 1 tools (valuation metrics)
     tools = [
-        get_pe_ratio,
-        get_eps,
-        get_dividend_yield,
-        get_market_cap,
-        get_52_week_range,
+        get_valuation_metrics,
     ]
 
     # Define system prompt for this subagent
     system_prompt = """You are a financial research specialist focusing on company valuation.
 
-You have access to Tier 1 valuation tools:
-- get_pe_ratio: P/E ratio and valuation status
-- get_eps: Earnings per share data
-- get_dividend_yield: Dividend information
-- get_market_cap: Market capitalization and size classification
-- get_52_week_range: 52-week high/low price range
+You have access to the get_valuation_metrics tool which provides:
+- P/E ratios (trailing and forward)
+- Earnings per share (EPS)
+- Dividend yield and payout information
+- Market capitalization and company size classification
+- 52-week price range and current position
 
-When asked about a company's valuation metrics, use the appropriate tools to gather data.
-Provide clear analysis of valuation metrics, comparing to industry averages and identifying if the stock is cheap, fair, or expensive."""
+When asked about a company's valuation metrics, use the get_valuation_metrics tool to gather comprehensive data.
+Provide clear analysis of valuation metrics and identify if the stock appears cheap, fair, or expensive."""
 
     # Create agent using LangChain
     agent = create_agent(
