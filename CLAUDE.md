@@ -12,18 +12,21 @@ Personal AI Investment Desk is an AI-powered investment management platform that
 - **Services**: Business logic layer for portfolio operations
 - **Brokers**: Abstract interface + implementations for each broker
 - **Models**: SQLAlchemy ORM for all entities
-- **Agent Orchestration**: LangGraph for multi-agent workflows + LangChain for RAG/document processing
+- **Agent Orchestration**: LangChain agent pattern with portfolio & research subagents
 
 ### Key Modules
 - `app/models.py` - Database schema (Asset, Holding, Transaction, Price, etc.)
 - `app/schemas.py` - Pydantic request/response models
-- `app/services.py` - Portfolio business logic
+- `app/services.py` - Portfolio business logic (legacy) + data sources (NewsAPI, SEC, etc.)
 - `app/brokers/__init__.py` - Broker integration interface and VirtualBroker
-- `app/routes.py` - API endpoints + agent orchestration
+- `app/routes.py` - API endpoints + agent initialization + chat endpoint
 - `app/main.py` - FastAPI app setup
-- `app/agents/` - Individual agent implementations (Portfolio, Research, Discovery)
-- `app/orchestrator/` - LangGraph workflow definitions and orchestration logic
-- `app/llm/` - LLM integrations (Claude, context building, prompts)
+- `app/agents/` - Agent implementations:
+  - `main_agent.py` - Main orchestrator (LangChain agent with subagents)
+  - `portfolio_subagent.py` - Portfolio holdings/transactions queries
+  - `research_subagent.py` - Valuation metrics (yfinance) + news (NewsAPI) with LLM-based tool routing
+- `app/mcp/` - MCP (Model Context Protocol) tools for portfolio data access
+- `app/llm/` - LLM integrations (Claude, Gemini, context building)
 
 ## Development Setup
 
@@ -65,18 +68,20 @@ python run.py
 - [ ] Real broker integrations (Scalable Capital, Binance)
 
 ### Phase 2: Multi-Agent Research System (CURRENT)
-- [x] Set up LangGraph + LangChain infrastructure
-- [x] Build LangGraph Orchestrator (LLM-based routing, no keyword matching)
-- [x] Build Research Agent (Tier 1: Valuation lookups)
-  - [x] P/E ratio, EPS, market cap queries
+- [x] Set up LangChain infrastructure with subagents
+- [x] Build Main Agent (orchestrator with portfolio & research subagents)
+- [x] Build Portfolio Subagent (holdings, transactions, portfolio summary)
+- [x] Build Research Subagent (Tier 1 + News integration)
+  - [x] P/E ratio, EPS, market cap queries (via yfinance)
   - [x] Dividend yield queries
   - [x] 52-week high/low queries
-  - [ ] Tier 2: News & events integration
-  - [ ] Tier 3: SEC filing RAG search
-- [ ] Build Discovery Agent (market scanning)
-- [ ] Build News Agent (real-time headlines & sentiment)
-- [ ] Implement RAG for SEC filing search (Tier 3)
-- [ ] Implement earnings transcript analysis (Tier 3)
+  - [x] Company news fetching (via NewsAPI)
+  - [x] LLM-based tool routing (infer nothing - only call what user asks for)
+  - [ ] Tier 2: SEC filing analysis
+  - [ ] Tier 3: Earnings transcript analysis
+- [ ] Add more specialized subagents (market scanning, risk analysis, etc.)
+- [ ] Implement RAG for SEC filing search (Tier 2/3 - future)
+- [ ] Implement earnings transcript analysis (Tier 3 - future)
 - [ ] Enhanced findings display in frontend
 
 ### Phase 3: AI Assistant
@@ -123,47 +128,29 @@ SELECT * FROM holdings; # View holdings
 - Services handle business logic, routes handle HTTP
 - Models are thin - logic lives in services
 - Agents are modular and composable
-- Use TypedDict for agent state in LangGraph
 
 ## Agent Architecture
 
-### Multi-Agent System with LangGraph
+### Multi-Agent System with LangChain
 
-**Orchestrator Flow:**
-1. **Route** - LLM intelligently decides which agents to run (no keyword matching)
-2. **Execute** - Selected agents run in parallel
-3. **Synthesize** - LLM combines findings into final answer
+**Main Agent Pattern:**
+Main agent calls Portfolio and Research subagents as tools, then synthesizes findings.
 
-**Agent Types:**
-1. **Portfolio Agent** - Tracks holdings, gains/losses, sector exposure
-2. **Research Agent** (Tier 1, 2, 3) - Company analysis:
-   - **Tier 1**: Valuation metrics (P/E, EPS, dividend, market cap, 52-week high/low)
-   - **Tier 2**: News, events, regulatory announcements
-   - **Tier 3**: SEC filing RAG search, earnings transcript analysis
-3. **News Agent** - Real-time headlines and market sentiment
-4. **Discovery Agent** - Market scanning for investment ideas
-5. **Synthesizer Agent** - Combines findings via LLM
+**Current Subagent Types:**
+1. **Portfolio Subagent** - Tracks holdings, transactions, portfolio summary
+2. **Research Subagent** - Company analysis with intelligent tool routing:
+   - **Tier 1** (IMPLEMENTED): Valuation metrics (P/E, EPS, dividend, market cap, 52-week high/low) via yfinance
+   - **News Integration** (IMPLEMENTED): Real-time headlines via NewsAPI
+   - **Tool Routing**: LLM-based decisions - only calls tools user explicitly asks for
+   - **Tier 2** (FUTURE): SEC filing analysis
+   - **Tier 3** (FUTURE): Earnings transcript analysis
 
-**Orchestration Architecture:**
-```
-User Query
-    ↓
-Orchestrator.route() → LLM decides agents (no keyword matching)
-    ↓
-Orchestrator.execute() → Run selected agents in parallel
-    ↓
-Orchestrator.synthesize() → LLM combines findings
-    ↓
-Final Answer with Source Attribution
-```
-
-- Uses **LangGraph** for state management and workflow
-- Agents run concurrently via `execute_agents_parallel()`
-- **LangChain** for:
-  - RAG over SEC filings (10-K, 10-Q, 8-K) - Tier 3
-  - Document processing and chunking
-  - Vector search and semantic retrieval
-  - LLM prompt management
+**Implementation Details:**
+- Uses **LangChain** `create_agent()` with subagents wrapped as tools
+- **yfinance** for valuation metrics (P/E, EPS, market cap, dividend, 52-week range)
+- **NewsAPI** for real-time company news
+- **Tool Routing Pattern**: Research subagent uses explicit LLM-based routing to call tools only when explicitly asked
+- **Future**: RAG over SEC filings (10-K, 10-Q, 8-K) for Tier 2/3 research
 
 ### Agent Findings & Sources
 - Every finding includes source attribution (Finding + SourceRef dataclasses)
@@ -178,9 +165,9 @@ Final Answer with Source Attribution
 3. **Service Layer**: Separates business logic from HTTP layer
 4. **Abstract Broker Interface**: Easy to add new integrations
 5. **Historical Snapshots**: Enables portfolio tracking over time
-6. **LangGraph + LangChain**: Multi-agent orchestration with RAG capabilities
+6. **LangChain Subagent Pattern**: Main agent orchestrates portfolio & research subagents as tools
 7. **Source Attribution**: Every finding is verifiable with source, credibility, and URL
-8. **Parallel Agent Execution**: Agents run concurrently, results synthesized by LLM
+8. **LLM-Based Tool Routing**: Research tools are called only when explicitly requested (no inference)
 
 ## Environment Variables
 
@@ -204,9 +191,8 @@ See `.env.example` for required configuration:
 - **Pydantic** - Data validation and serialization
 
 ### AI & Agents
-- **LangGraph** - Multi-agent orchestration and workflow management
-- **LangChain** - Document processing, RAG, prompt management
-- **Anthropic Claude** - LLM for synthesis and analysis
+- **LangChain** - Subagent orchestration with tool wrapping
+- **Anthropic Claude** - LLM for agent reasoning and synthesis
 - **Google Gemini** - Alternative LLM option
 - **Ollama** - Local LLM option for development
 
@@ -226,16 +212,13 @@ See `.env.example` for required configuration:
 ## Development Priorities
 
 ### Immediate (Tier 1 - Quick Wins)
-1. Build Research Agent - Tier 1 (valuation queries)
-   - P/E ratio, market cap, EPS, dividend, 52-week high/low
-   - Uses yfinance (already integrated)
-   - No new dependencies needed
-2. Build Discovery Agent (market scanning)
-3. Set up LangGraph orchestrator
-4. Test parallel agent execution
+1. ✅ Research Subagent - Tier 1 (valuation queries + news)
+2. ✅ Portfolio Subagent (holdings, transactions)
+3. ✅ Main Agent orchestration with LangChain
+4. Test with real user queries and validate tool routing
 
 ### Medium-term (Tier 2 - Enhanced Research)
-1. Add news & event synthesis to Research Agent
+1. Add more specialized subagents (risk analysis, sector analysis)
 2. Build regulatory/lawsuit tracking
 3. Implement sentiment analysis
 4. Add analyst consensus integration
@@ -244,54 +227,47 @@ See `.env.example` for required configuration:
 1. Implement SEC filing RAG
 2. Add earnings transcript analysis
 3. Implement financial red-flag detection
-4. Build sector/industry analysis agent
+4. Build discovery agent (market scanning)
 
 ## Agent Development Guidelines
 
 ### Creating a New Agent
 1. Create `app/agents/{agent_name}_agent.py`
-2. Extend `BaseAgent` class
+2. Extend `BaseAgent` class with `name` parameter
 3. Implement `async def execute(context: AgentContext) -> AgentOutput`
 4. Use `Finding` + `SourceRef` for source-attributed results
-5. Register in `app/orchestrator/orchestrator.py` (not routes.py)
+5. Register in `app/routes.py` agents dictionary (passed to AssistantWorkflow)
 
-### Orchestrator Usage
+### Main Agent (LangChain Subagent Pattern) Usage
 ```python
-from app.orchestrator import Orchestrator
+from app.agents.main_agent import create_main_agent
 
-# Initialize with agents
-orchestrator = Orchestrator({
-    "portfolio": PortfolioAgent(),
-    "research": ResearchAgent(),
-    "news": NewsAgent(),
-    "discovery": DiscoveryAgent(),
-})
+# Create main agent with portfolio & research subagents
+llm_model = get_llm_model()
+agent = create_main_agent(llm_model)
 
-# Run orchestrator
-state = await orchestrator.ainvoke(
-    user_query="What is Microsoft's P/E ratio?",
-    llm_client=llm_client,
-    db_factory=get_session_factory(),
-    mcp_client=mcp_client,
+# Run agent
+result = await agent.ainvoke(
+    {"messages": [{"role": "user", "content": "What is Microsoft's P/E ratio?"}]}
 )
 
-response = state["response"]  # Final answer with sources
+response = result.get("messages", [])[-1].content  # Final answer
 ```
 
-### LangGraph Workflow Pattern
+### Research Subagent Tool Routing Pattern
+Research subagent uses explicit LLM-based routing to prevent unnecessary tool calls:
+```python
+system_prompt = (
+    "### Tool Usage & Routing\n"
+    "1. **Fundamental Data:** Call `get_valuation_metrics` ONLY when explicitly asked about "
+    "valuation ratios (P/E, EV/EBITDA, P/S), market cap, revenue, profitability, or balance sheet.\n"
+    "2. **Recent Events:** Call `get_company_news` when asked about recent developments, "
+    "earnings announcements, leadership changes, M&A, or market sentiment.\n"
+    "3. **Comprehensive Queries:** If explicitly asked for 'full analysis', call BOTH tools. "
+    "Otherwise, infer nothing - only call tools the user mentions.\n"
+)
 ```
-START
-  ↓
-_route (LLM: which agents?)
-  ↓
-_execute (Run agents in parallel)
-  ↓
-_synthesize (LLM: combine findings)
-  ↓
-END
-```
-
-**Key: No keyword matching** - LLM intelligently decides based on user intent, not hardcoded rules.
+This ensures the agent calls tools **only when explicitly asked**, not based on inference.
 
 ### Finding Source Attribution Pattern
 ```python
@@ -311,19 +287,50 @@ finding = Finding(
 )
 ```
 
+## Testing & Development
+
+### Test Main Agent with Sample Queries
+Use `scripts/test_chat_prompts.py` to test the agent system:
+```bash
+# Run default test prompts
+python scripts/test_chat_prompts.py
+
+# Run custom prompt
+python scripts/test_chat_prompts.py --prompt "What are my holdings?"
+
+# Run interactively
+python scripts/test_chat_prompts.py --interactive
+
+# Show tool calls and execution traces
+python scripts/test_chat_prompts.py --trace
+```
+
 ## Next Steps
 
-1. ✅ Update CLAUDE.md with LangGraph + LangChain architecture
-2. Install additional dependencies for Tier 2 & 3:
-   ```bash
-   pip install sec-edgar chromadb sentence-transformers pypdf beautifulsoup4 langchain langchain-community
-   ```
-3. Build Research Agent - Tier 1 (valuation queries)
-4. Build Discovery Agent
-5. Create LangGraph orchestrator workflow
-6. Test parallel agent execution
-7. Enhance Research Agent with Tier 2 (news/regulatory)
-8. Implement RAG for Tier 3 (SEC filings)
+### Completed ✅
+1. ✅ Set up LangChain orchestration with subagents
+2. ✅ Implement Portfolio Subagent
+3. ✅ Implement Research Subagent (Tier 1 + News)
+4. ✅ LLM-based tool routing (only call what user asks)
+5. ✅ Source-attributed findings architecture
+6. ✅ Code cleanup (removed 17 redundant docs, all LangGraph files)
+
+### Immediate (Tier 1 - Validation & Bugs)
+1. Test with real user queries to validate tool routing
+2. Fix any edge cases in portfolio/research queries
+3. Enhance error handling
+
+### Medium-term (Tier 2 - Enhanced Research)
+1. Add more specialized subagents (risk analysis, sector analysis)
+2. Implement SEC filing analysis
+3. Add earnings announcement integration
+4. Implement sentiment analysis from news
+
+### Long-term (Tier 3 - Deep Analysis)
+1. Implement SEC filing RAG with ChromaDB
+2. Add earnings transcript analysis
+3. Build discovery agent (market scanning)
+4. Add risk assessment agent
 
 ## Troubleshooting
 
