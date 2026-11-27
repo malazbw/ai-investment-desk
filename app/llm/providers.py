@@ -253,11 +253,10 @@ class GeminiProvider(LLMProvider):
         self.api_key = api_key
         self.model = model
         self.logger = logger
-        self.llm = ChatGoogleGenerativeAI(
-            model=model,
-            api_key=api_key,
-            temperature=0.7,
-        )
+        model_options: Dict[str, Any] = {"model": model, "api_key": api_key}
+        if model.rsplit("/", 1)[-1] != "gemini-3.5-flash-lite":
+            model_options["temperature"] = 0.7
+        self.llm = ChatGoogleGenerativeAI(**model_options)
 
     async def analyze(
         self,

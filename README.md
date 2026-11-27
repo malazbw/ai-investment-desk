@@ -103,6 +103,28 @@ The development server runs at <http://localhost:8000>.
 The API root (`/`) returns application status information; use the static URL
 above to open the dashboard.
 
+## Test chatbot prompts
+
+With the virtual environment active and `.env` configured for an LLM provider,
+run the main-agent prompt suite without starting the web server:
+
+```bash
+python -m scripts.test_chat_prompts
+```
+
+Pass one or more custom prompts with `--prompt`, or use `--interactive` to enter
+prompts one at a time. Run it as a module so Python uses the active virtual
+environment. News prompts require `NEWSAPI_KEY`; portfolio prompts read the
+configured local database.
+
+Add `--trace` to print tool calls, inputs, and outputs to the terminal:
+
+```bash
+python -m scripts.test_chat_prompts --interactive --trace
+```
+
+Trace output stays local but can include prompt and portfolio data.
+
 To load the virtual portfolio:
 
 ```bash

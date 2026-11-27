@@ -1,12 +1,15 @@
-"""Tier 1 company research agent backed by Yahoo Finance fundamentals."""
+"""Company research agent backed by Yahoo Finance fundamentals and NewsAPI."""
+import json
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Any
 
 import yfinance as yf
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
-from app.services.yahoo_finance import YahooFinanceService
+from app.data_sources.news_fetcher import NewsSearcher
 
 logger = logging.getLogger(__name__)
 
@@ -113,16 +116,90 @@ def get_valuation_metrics(ticker: str) -> str:
         return f"Valuation data not available for {ticker}"
 
 
+@tool
+async def get_company_news(
+    ticker: str, company_name: str = "", days: int = 7
+) -> str:
+    """Fetch recent company headlines and publisher snippets from NewsAPI.
+
+    Args:
+        ticker: Stock symbol (e.g., MSFT, AAPL, NVDA).
+        company_name: Company name to improve matching (e.g., Microsoft).
+        days: Number of days to search, from 1 to 30.
+    """
+    normalized_ticker = ticker.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", normalized_ticker):
+        return json.dumps(
+            {
+                "status": "error",
+                "ticker": normalized_ticker,
+                "error": f"Invalid ticker symbol: {ticker}",
+            }
+        )
+    if not 1 <= days <= 30:
+        return json.dumps(
+            {
+                "status": "error",
+                "ticker": normalized_ticker,
+                "error": "The news search period must be between 1 and 30 days.",
+            }
+        )
+
+    normalized_name = company_name.strip()
+    query = (
+        f'"{normalized_name}" OR {normalized_ticker}'
+        if normalized_name
+        else normalized_ticker
+    )
+    try:
+        articles = await NewsSearcher.search_newsapi(query, days=days)
+    except RuntimeError as exc:
+        logger.warning("NewsAPI research failed for %s: %s", normalized_ticker, exc)
+        return json.dumps(
+            {
+                "status": "error",
+                "ticker": normalized_ticker,
+                "source": "NewsAPI",
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc),
+            },
+            ensure_ascii=False,
+        )
+
+    return json.dumps(
+        {
+            "status": "ok" if articles else "no_results",
+            "ticker": normalized_ticker,
+            "company_name": normalized_name or None,
+            "source": "NewsAPI",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "search_window_days": days,
+            "evidence_level": "headline_and_publisher_snippet",
+            "articles": [
+                {
+                    "headline": article.headline,
+                    "publisher": article.source,
+                    "published_at": article.published_date.isoformat(),
+                    "url": article.url,
+                    "snippet": article.description,
+                }
+                for article in articles
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
 # ============================================================================
 # RESEARCH SUBAGENT
 # ============================================================================
 
 def create_research_subagent(llm_model: Any):
     """
-    Create Research Subagent with Tier 1 valuation tools.
+    Create Research Subagent with valuation and company-news tools.
 
     This subagent:
-    - Has access to valuation metric tools
+    - Has access to valuation metrics and recent company news
     - Runs independently
     - Can be called by Main Agent as a tool
 
@@ -134,36 +211,19 @@ def create_research_subagent(llm_model: Any):
     """
     logger.info("[research_subagent] Creating Research Subagent")
 
-    # Define Tier 1 tools (valuation metrics)
-    tools = [
-        get_valuation_metrics,
-    ]
-
-    # Define system prompt for this subagent
-    system_prompt = """You are a financial research specialist focusing on company valuation.
-
-You have access to the get_valuation_metrics tool which provides:
-- P/E ratios (trailing and forward)
-- Earnings per share (EPS)
-- Dividend yield and payout information
-- Market capitalization and company size classification
-- 52-week price range and current position
-
-When asked about a company's valuation metrics, use the get_valuation_metrics tool to gather comprehensive data.
-Provide clear analysis of valuation metrics and identify if the stock appears cheap, fair, or expensive."""
-
-    # Create agent using LangChain
-    agent = create_agent(
+    return create_agent(
         model=llm_model,
-        tools=[get_tier1_fundamentals],
+        tools=[get_valuation_metrics, get_company_news],
         system_prompt=(
-            "You are a company research assistant focused on Tier 1 fundamentals. "
-            "Ground factual claims in the data returned by your tool. State clearly "
-            "when a metric is missing or unavailable, and do not invent values. "
-            "Do not provide news or event research, SEC filing search, transcript "
-            "analysis, or unsupported valuation conclusions."
+            "You are a company research assistant. Use get_valuation_metrics for "
+            "fundamental metrics and get_company_news for recent company headlines. "
+            "Ground factual claims in tool results, state when data is unavailable, "
+            "and do not invent values. When reporting news, include the publisher, "
+            "publication date, and URL, and distinguish headlines/snippets from "
+            "independently verified facts. Do not perform SEC filing search or "
+            "transcript analysis, and do not make unsupported valuation conclusions."
         ),
-        name="Tier 1 Research Agent",
+        name="Company Research Agent",
     )
 
 
@@ -174,8 +234,8 @@ def create_research_subagent_tool(llm_model: Any):
     @tool(
         "research_subagent",
         description=(
-            "Answer questions about a public company's Tier 1 fundamentals, such as "
-            "P/E, EPS, market capitalization, dividends, and 52-week price range."
+            "Research a public company's fundamentals or recent news. Covers P/E, EPS, "
+            "market capitalization, dividends, 52-week range, and NewsAPI headlines."
         ),
     )
     async def call_research_subagent(query: str) -> str:

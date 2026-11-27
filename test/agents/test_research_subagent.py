@@ -69,7 +69,7 @@ def test_main_agent_routes_tier1_question_to_research_agent():
     assert "research_subagent" in tool_names, (
         f"Main agent did not call research_subagent; observed tool events: {tool_names}"
     )
-    assert "get_tier1_fundamentals" in tool_names, (
+    assert "get_valuation_metrics" in tool_names, (
         f"Research agent did not call its fundamentals tool; observed: {tool_names}"
     )
     assert isinstance(final_state, dict), "Main agent returned no final state"

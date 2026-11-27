@@ -1,9 +1,11 @@
 """
 Context builder - aggregates and formats agent outputs for Claude
 """
-from typing import List, Dict, Any
-from app.agents.base import AgentOutput
 import logging
+from typing import TYPE_CHECKING, Any, Dict, List
+
+if TYPE_CHECKING:
+    from app.agents.base import AgentOutput
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +14,7 @@ class ContextBuilder:
     """Builds context from agent outputs for Claude consumption"""
 
     @staticmethod
-    def build_context(agent_outputs: List[AgentOutput]) -> Dict[str, Any]:
+    def build_context(agent_outputs: List["AgentOutput"]) -> Dict[str, Any]:
         """
         Aggregate agent outputs into context for Claude.
 
